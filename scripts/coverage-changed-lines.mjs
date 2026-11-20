@@ -83,7 +83,8 @@ export function unquoteGitPath (path) {
   if (!(path.length >= 2 && path.startsWith('"') && path.endsWith('"'))) return path
   const escapes = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 }
   const bytes = []
-  const body = path.slice(1, -1)
+  // Iterate by code point so literal astral characters (core.quotePath=false) stay whole.
+  const body = Array.from(path.slice(1, -1))
   for (let i = 0; i < body.length; i++) {
     const ch = body[i]
     if (ch !== '\\') {
@@ -92,7 +93,7 @@ export function unquoteGitPath (path) {
     }
     const next = body[i + 1]
     if (/[0-7]/.test(next ?? '')) {
-      const octal = /^[0-7]{1,3}/.exec(body.slice(i + 1))[0]
+      const octal = /^[0-7]{1,3}/.exec(body.slice(i + 1, i + 4).join(''))[0]
       bytes.push(parseInt(octal, 8))
       i += octal.length
     } else if (next in escapes) {

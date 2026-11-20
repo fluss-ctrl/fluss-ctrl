@@ -83,6 +83,7 @@ describe('unquoteGitPath', () => {
     expect(unquoteGitPath('"b/packages/core/src/caf\\303\\251.ts"')).toBe('b/packages/core/src/café.ts')
     expect(unquoteGitPath('"b/a\\tb\\"c\\\\d.ts"')).toBe('b/a\tb"c\\d.ts')
     expect(unquoteGitPath('b/plain.ts')).toBe('b/plain.ts')
+    expect(unquoteGitPath('"b/packages/core/src/😀\\"a.ts"')).toBe('b/packages/core/src/😀"a.ts')
   })
 
   it('joins a quoted non-ASCII diff path with its lcov entry', () => {
