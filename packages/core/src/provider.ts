@@ -157,4 +157,3 @@ export interface Provider {
   sendCommand(device: DeviceRef, cmd: CommandRequest): Promise<SendResult>
   health(): Promise<ProviderHealth>
 }
-
