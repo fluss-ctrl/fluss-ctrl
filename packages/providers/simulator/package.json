@@ -1,0 +1,18 @@
+{
+  "name": "@flussctrl/provider-simulator",
+  "version": "0.0.0",
+  "description": "Simulator provider: the reference Provider used by tests, sandbox and the conformance kit.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.1.1"
+  }
+}

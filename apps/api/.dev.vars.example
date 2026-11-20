@@ -1,0 +1,5 @@
+# Copy to .dev.vars for `pnpm dev`. Placeholders only: never commit real values.
+# Non-secret settings live in wrangler.jsonc "vars"; this file is for local secrets and overrides.
+# Every key is validated at startup by apps/api/src/env.ts.
+ENVIRONMENT=dev
+LOG_LEVEL=debug

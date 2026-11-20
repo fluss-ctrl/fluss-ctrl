@@ -1,0 +1,12 @@
+// Local development only (`pnpm dev`). Per-environment configs for preview, staging and
+// production live in /infra/wrangler and are applied from CI (#9, #10), never from a session.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "fluss-ctrl-api-dev",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ENVIRONMENT": "dev"
+  }
+}

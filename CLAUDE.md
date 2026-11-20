@@ -57,7 +57,7 @@ pnpm dev                 # api (console from Phase 2) on Miniflare, Neon dev bra
 pnpm test:unit           # inner loop: unit + contract + conformance(simulator); no Docker
 pnpm test                # everything CI runs: the above + integration (needs Docker)
 pnpm test:integration    # Vitest + Testcontainers, real Postgres (needs Docker)
-pnpm --filter <pkg> test -- <file>     # one package or file; add -t "name" for one test
+pnpm --filter <pkg> test <file>        # one package or file; add -t "name" for one test
 pnpm test:e2e            # Playwright against preview URL ($PREVIEW_URL)
 pnpm test:docs           # run the quickstart snippets against $PREVIEW_URL
 pnpm lint && pnpm typecheck
