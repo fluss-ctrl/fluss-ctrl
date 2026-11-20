@@ -1,0 +1,842 @@
+# Fluss Ctrl — Technical Specification v1
+
+> Status: v0.11 draft — 10 Nov 2026 (review pass: gate semantics, command-path correctness, schema, build phases). Companion to `PLAN.md` and `CLAUDE.md`.
+> This spec is the source of truth for behaviour. The OpenAPI document is generated
+> from code and must match it; where they disagree, fix the code or this file, never
+> just the generated spec.
+
+## 0. Build phases (read first)
+
+This spec describes all of v1, but v1 is built in phases (PLAN §7). Build only what the current phase lists. A section or field tagged with a later phase is context for design decisions, not a work order: do not create its tables, endpoints, Durable Object logic or tests early. Migrations are expand-only, so adding a table or column in a later phase costs nothing.
+
+| Phase | Builds |
+|-------|--------|
+| 0–1 (Nov – Dec 2026) | Conventions, tenancy and machine auth (§1–3.2); sites, controllers, devices, groups, subjects, grants, commands with verification, events and webhooks (§4–8, less the later items below); simulator and conformance kit (§10–11); docs and CLI basics |
+| 2 (Jan 2027) | Fluss+ provider (§12) and provider links; Gemini and Nice once specified (§23); unofficial providers once cleared (§22.3); console auth and customer console (§3.3–3.4, §13.1); admin endpoints with `fctl admin` (§13.2); status page |
+| 3 (Feb 2027) | Metering and usage statements (§15); warm standby and circuit breakers (§21); Wiegand bridge once specified (§23) |
+| 4 (Mar 2027) | Emergency modes (§4 Emergency, and every `emergency`, `egress` and `hold` item elsewhere); admin web UI and metrics feed (§13.2); self-serve payment (§15); TypeScript SDK |
+| Post-launch | MCP server and delegated OAuth (§3.1, §19); connectors (`POST /connectors`, `lock`/`unlock`); Comb; Postgres-backed platform adapters and break-glass container (§21.3); billing automation (§15); Python and C# SDKs; everything in §20 |
+
+Tables by phase (§5): 0–1 `organisations`, `clients`, `client_secrets`, members, `sites`, `providers`, `controllers`, `devices`, `device_groups`, `subjects`, `grants`, `commands`, `events`, `ingested_refs`, `webhook_endpoints`, `webhook_deliveries`, `idempotency_keys`, `audit_log`; 2 `provider_links`; 3 `usage_daily`; 4 `site_emergencies`, `metrics_daily`, `org_notes`, `invoices`, `payments` and the emergency columns (`sites.emergency_config`, `devices.egress`, `grants.emergency_exempt`, `commands.emergency_id`); post-launch `connectors`, `billing_adjustments`.
+
+## 1. Conventions
+
+- Base URL: `https://api.flussctrl.com/v1`
+- JSON only. UTF-8. `Content-Type: application/json`.
+- IDs: prefixed, URL-safe, globally unique: `org_…`, `site_…`, `ctl_…`, `dev_…`, `grp_…`, `sub_…`, `grt_…`, `cmd_…`, `evt_…`, `whk_…`, `cli_…`, `emg_…`. Use UUIDv7 under the prefix (sortable).
+- Timestamps: RFC 3339 UTC (`2026-10-14T12:00:00Z`). Durations in seconds. Schedules carry an IANA timezone.
+- Versioning: path (`/v1`). Additive changes do not bump. Breaking changes → `/v2` with a 12-month overlap. `oasdiff` enforces this in CI.
+- Idempotency: `Idempotency-Key` header (UUID) is **required** on `POST /devices/{id}/commands` and accepted on all other POSTs. Keys are scoped to the client. For commands the key lives on the command itself (`UNIQUE(client_id, idempotency_key)`), so it is honoured for as long as the command is retained (90 days, §14): a replay never actuates twice and returns the **current** state of the original command with `Idempotent-Replayed: true` (and honours `?wait=`). For other POSTs the response is stored for 24 h (`idempotency_keys`) and replayed as it was. The same key with a different request body is `422 idempotency_key_reused`; a replay that arrives while the original is still being accepted is `409 idempotency_in_progress`.
+- Pagination: cursor-based. `?limit=` (default 50, max 200) and `?cursor=`. Responses: `{ "data": [...], "next_cursor": "…" | null }`.
+- Filtering: documented per list endpoint; always supports `?site_id=`.
+- Errors (RFC 9457 problem details):
+  ```json
+  { "type": "https://docs.flussctrl.com/errors/device_offline",
+    "title": "Device offline", "status": 409,
+    "code": "device_offline", "detail": "…", "request_id": "req_…" }
+  ```
+  Stable `code` values are the API contract; `title`/`detail` are not.
+- Every response carries `X-Request-Id`. Every log line (structured JSON) and Sentry event carries it. Logs go to Workers Logs with Logpush to R2, 30-day retention, phone numbers and secrets redacted.
+- Environment variables and bindings are validated with Zod at startup; the Worker refuses to serve on a bad config.
+- Rate limits: per client, token bucket 50 req/s sustained, 200 burst (`429` + `Retry-After`). Per device: minimum 2 s between commands unless the provider declares a lower safe interval (`409 command_rate_limited`).
+- Sandbox: identical API surface. Every organisation has a paired sandbox organisation (`organisations.sandbox_of`), created with it. A sandbox client belongs to the sandbox organisation, and its token carries that organisation's id in `org` and `env: sandbox`, so the ordinary `org_id` filter and RLS are the isolation; no other table needs an `env` column. Sandbox organisations can use only the `simulator` provider, are never metered, and deliver webhooks only to their own endpoints. Console members of the live organisation can switch to its sandbox.
+
+## 2. Tenancy and resource model
+
+```
+Organisation (platform, e.g. an estate app)            org_…
+ ├─ Clients (OAuth2 credentials; env = live | sandbox)  cli_…
+ ├─ Webhook endpoints                                   whk_…
+ ├─ Subjects (people the platform knows about)          sub_…
+ └─ Sites (an estate, a complex, a building)            site_…
+     ├─ Controllers (physical units)                    ctl_…
+     ├─ Devices (one controller output: gate, boom,     dev_…
+     │   door, pedestrian gate, switch)
+     ├─ Device groups (e.g. "Main entrance" = in + out)  grp_…
+     ├─ Grants (subject × device|group × access type)   grt_…
+     ├─ Commands (one per attempted action)             cmd_…
+     └─ Events (the log of record)                      evt_…
+```
+
+- An org belongs to exactly one `region`.
+- Every org has a paired sandbox org (§1). Live clients belong to the org and sandbox clients to its sandbox; nothing is shared between the two.
+- A controller belongs to exactly one site and provider; a device is one output (channel) of a controller. Most vendors have one channel per unit; Fluss+ has up to three.
+- A grant targets either one device or one group, never both.
+- Subjects are org-scoped. The same human at two platforms is two subjects in v1 (the one-credential identity layer is v2 and is designed to merge them by verified phone).
+- `controllers.org_id` is the **owner** org. v1 has one org per controller, but the cross-platform play (an estate app and a delivery platform using the same gate) needs owner-to-org sharing later. Design rule now: nothing outside ownership and billing may assume a device belongs to exactly one org; grants, commands and events reference the device, never "the org's device". A `device_shares` table (owner org → consumer org, scoped grant types and actions) is the planned v1.1 addition.
+
+## 3. Authentication and authorisation
+
+### 3.1 OAuth2 client credentials (machine to machine)
+
+- `POST /oauth/token` with `grant_type=client_credentials`, `client_id`, `client_secret`, optional `scope`. Accepts `application/x-www-form-urlencoded` and JSON. Also supports HTTP Basic for client auth (RFC 6749 §2.3.1).
+- Response: `{ "access_token": "<JWT>", "token_type": "Bearer", "expires_in": 3600, "scope": "…" }`.
+- JWT: EdDSA (Ed25519). Claims: `iss`, `sub` (= `cli_…`), `org` (= `org_…`), `env` (`live`|`sandbox`), `region`, `scope`, `iat`, `exp`, `jti`. Signing keys rotate; `GET /.well-known/jwks.json` publishes current + previous.
+- Client secrets are 256-bit random; stored as `sha256(secret + per-secret salt)`. Shown once at creation. Rotation: a client can hold two active secrets.
+- Clients and secrets are managed in the console or via `/clients` endpoints (scope `clients:manage`, console-only by default).
+- Revocation: tokens live one hour, and the edge checks a KV denylist of revoked `jti`s and disabled clients on every request (cached, sub-millisecond). The console has a per-org "revoke all tokens" action that bumps a `token_epoch` claim.
+- Agent and delegated access (v1.1, needed for the MCP server in §19): authorization code + PKCE, dynamic client registration (RFC 7591), authorization server metadata (RFC 8414) and protected resource metadata (RFC 9728). The token shape and scope model do not change; tokens gain `act` (actor) claims so the audit log records the human behind an agent.
+
+### 3.2 Scopes
+
+| Scope | Allows |
+|-------|--------|
+| `sites:read` / `sites:write` | sites |
+| `devices:read` | list devices and controllers, status |
+| `devices:write` | claim, link, rename, group, archive |
+| `commands:write` | trigger/open/close/lock/unlock |
+| `subjects:read` / `subjects:write` | subjects |
+| `grants:read` / `grants:write` | grants |
+| `events:read` | event log |
+| `emergency:manage` | start, replace and end site emergencies; command devices during a lockdown (Phase 4) |
+| `webhooks:manage` | endpoints and replays |
+| `clients:manage` | clients and secrets |
+
+Tokens without a scope get the client's default scope set. Scope checks happen before any DB read.
+
+### 3.3 Console (humans)
+
+Better Auth: email + passkey (passwords allowed but discouraged), organisation plugin for membership and roles (`owner`, `admin`, `developer`, `viewer`). The customer console calls the same public API with a session-derived token carrying the member's role as scopes. Fluss staff functions are a separate surface: `/v1/admin/*` with `ops:*` scopes (§13.2).
+
+### 3.4 Fluss operations
+
+Fluss staff hold one of the three ops roles defined in §13.2 (`ops_admin`, `ops_support`, `ops_finance`). According to role they can view any org, impersonate read-only, and run provider diagnostics. Every ops action is written to `audit_log` with actor and reason.
+
+## 4. Endpoints
+
+All under `/v1`. Request/response bodies are defined with Zod in `packages/core/src/schemas` and are the OpenAPI source.
+
+### Sites
+- `GET /sites`, `POST /sites`, `GET /sites/{id}`, `PATCH /sites/{id}`, `DELETE /sites/{id}` (archive).
+- Site: `{ id, name, address?, timezone (IANA, required), emergency_config: { egress_reviewed_at, egress_reviewed_by, hold_grace_s, hold_reissue_interval_s }, metadata, created_at }`. `POST /sites/{id}/egress-review` records the review (owner/admin; scope `sites:write`). Archiving a site archives its controllers (with provider unlink), devices, groups and grants. `emergency_config` and the egress review arrive with emergency modes (Phase 4).
+
+### Devices
+- `GET /devices?site_id=&group_id=&provider=&online=`
+- `GET /devices/{id}` → device incl. `capabilities` and `last_status`.
+- `GET /devices/{id}/status` → fresh status (provider call; falls back to cached with `stale: true` after a 3 s provider timeout).
+- `PATCH /devices/{id}` (name, group, metadata, `controls`, `egress`).
+- `DELETE /devices/{id}` (archive the channel only; no provider action). Unclaiming hardware is `DELETE /controllers/{id}`.
+- Onboarding (mode depends on provider, see §10.3):
+  - `POST /devices/claim` `{ site_id, provider: "fluss_plus", serial, claim_code }` → `{ controller, devices[] }` (one device per output the unit exposes). Which code is accepted depends on whether the unit already has an owner (§10.3). `409 controller_already_claimed` if another organisation holds the unit.
+  - Migration for existing partners: `POST /devices/claim` `{ site_id, provider: "fluss_plus", legacy_api_key, serials?: [] }` → imports the units that key's user can already operate (all of them, or only the listed serials) with the permissions that user holds and never more (§12.3 item 1b). The key is used once and not stored. The response lists `{ controller, devices[], permission }` per unit, and `skipped[]` with reasons.
+  - `POST /providers/{provider}/links` `{ site_id, identity?: { phone }, credentials?: {…} }` → for API-key or OAuth vendors, returns `{ link, controllers[], devices[] }` directly; for challenge-based vendors (OTP to the account owner's phone), returns `202 { link_id, status: "pending_challenge", challenge: { type: "otp", sent_to: "+27…", expires_at } }`
+  - `POST /providers/{provider}/links/{link_id}/verify` `{ code }` → completes the challenge, imports `{ controllers[], devices[] }`. Three attempts, ten-minute expiry, rate-limited per phone number.
+  - `GET /providers/{provider}/links`, `GET …/{link_id}` (status `pending_challenge | active | needs_reauth | revoked`, `identity`, `consent`, `last_sync_at`), `POST …/{link_id}/reauth` (restarts the challenge when a vendor invalidates credentials), `POST …/{link_id}/sync` (rediscover controllers now), `DELETE …/{link_id}` (revoke; archives the link's controllers and devices).
+  - `POST /connectors` `{ site_id, provider }` → returns an enrolment token for the on-prem connector; devices appear via discovery. Post-launch, with the connector providers.
+
+Device:
+```json
+{
+  "id": "dev_…", "site_id": "site_…", "group_id": "grp_…|null",
+  "controller_id": "ctl_…", "channel": "io:1", "channel_role": "main|pedestrian|switch|other|null",
+  "name": "Main gate", "kind": "gate|boom|door|garage|turnstile|pedestrian_gate|other",
+  "egress": false,
+  "provider": "fluss_plus", "provider_stability": "official|partner|unofficial",
+  "controls": { "brand": "centurion", "model": "D5-Evo", "pulse_mode": "toggle", "autoclose_s": 15 },
+  "capabilities": {
+    "actions": ["trigger", "open", "close"],
+    "status": true,
+    "ack": true,
+    "verification_level": "status",
+    "min_command_interval_s": 2,
+    "confirm_window_s": { "trigger": 10, "open": 10, "close": 45 },
+    "supports_grant_types": ["permanent", "time_window", "recurring", "count_limited"],
+    "supports_remote_grant_sync": false,
+    "hold": ["open"]
+  },
+  "online": true,
+  "last_status": { "state": "closed", "observed_at": "…", "stale": false },
+  "metadata": {}, "created_at": "…"
+}
+```
+
+`controls.pulse_mode` records what a trigger pulse does on this motor, because that decides whether a pulse can ever close the gate:
+- `toggle`: a pulse on a stationary gate moves it the other way, so a pulse can close an open gate; a pulse on a moving gate stops or reverses it (Centurion's Standard and Reversing modes, and their equivalents on other brands).
+- `open_only`: a pulse opens or re-opens the gate and, while it is open, restarts the motor's autoclose timer; only autoclose closes it (Centurion's Condominium mode, the one intended for estates and complexes, and its equivalents on other brands).
+- `unknown` (default): not yet recorded.
+
+`controls.autoclose_s` is the motor's autoclose time, where known. Both are set by the platform or installer through `PATCH /devices/{id}`, or by the provider where the vendor exposes them. They decide whether `close` is offered (§7) and what each emergency mode sends.
+
+### Controllers
+- `GET /controllers?site_id=`, `GET /controllers/{id}` → the physical unit: provider, serial, firmware, `online`, `last_seen_at`, diagnostics (signal, network), and its `device_ids`.
+- `DELETE /controllers/{id}` → unclaim/unlink at the provider, archive the controller and all its devices, revoke their grants, emit `device.archived` per device.
+
+### Device groups
+- `GET /groups`, `POST /groups`, `GET /groups/{id}`, `PATCH /groups/{id}`, `DELETE /groups/{id}`.
+- Group: `{ id, site_id, name, device_ids[], metadata }`. A device is in at most one group. Grants on a group apply to all its devices, including devices added later.
+
+### Subjects
+- `GET /subjects`, `POST /subjects`, `GET /subjects/{id}`, `PATCH /subjects/{id}`, `DELETE /subjects/{id}` (erasure: see §14).
+- Subject: `{ id, external_id (required, unique per org), name?, phone? (E.164), email?, metadata }`.
+- `GET /subjects/{id}/grants`, `GET /subjects/{id}/export` (data-subject export, JSON).
+
+### Grants
+- `GET /grants?subject_id=&device_id=&group_id=&status=`
+- `POST /grants`, `GET /grants/{id}`, `PATCH /grants/{id}` (extend/shorten window, adjust uses), `DELETE /grants/{id}` (revoke; immediate).
+- See §6 for types and semantics.
+
+### Commands
+- `POST /devices/{id}/commands` `{ action, subject_id?, grant_id?, reason?, params? }` → `202 Accepted` with a Command. Add `?wait=<1..15>` to hold the response until terminal state or the wait elapses (returns current state either way). A rejection known at accept time is an HTTP error that still records the command (§7.3).
+- `GET /commands/{id}`
+- `GET /commands?device_id=&since=`
+- See §7.
+
+### Emergency (site-wide) — Phase 4
+
+Two modes, one active emergency per site at a time. Both are control-room features and both are audit-logged with a reason. What either mode sends to a gate depends on what a pulse does to its motor (`controls.pulse_mode`, see Devices): on most estate gates a pulse can open the gate but cannot close it.
+
+- `POST /sites/{id}/emergency` `{ mode: "evacuate" | "lockdown", reason, replace?: false }` → `202` with the emergency record and a per-device outcome list that fills in live. `409 emergency_active` if one is running in the other mode, unless `replace: true` (which ends it and starts the new one in one call, fully logged).
+- `GET /sites/{id}/emergency` → current emergency (or `null`), per-device `{ device_id, action_taken, state, verification_level, outcome, held, vendor_access }`, and `held_since`. `outcome` is one of `opened`, `closed`, `pending`, `relies_on_autoclose`, `unverified`, `unsupported`, `egress`, `failed`; `held` says whether Fluss Ctrl (or a native hold) is actively keeping the device in the target state.
+- `DELETE /sites/{id}/emergency` `{ reason }` → ends the hold and emits `site.emergency_ended`. Nothing is auto-reversed: devices stay as they are and the platform issues whatever commands it wants afterwards.
+- Scope `emergency:manage` (a dedicated scope, so an agent or a junior client can be given `commands:write` without it). Console: `owner` and `admin` roles only.
+
+**`evacuate`** (fail-safe direction)
+- Every device that supports `open` or `trigger` is opened in parallel, bypassing per-device minimum intervals but not per-device serialisation. What is sent depends on what a pulse does to that motor (`controls.pulse_mode`):
+  - `open_only`: pulsed whatever its state. A pulse can only open it or keep it open.
+  - `toggle` or `unknown`, with status: pulsed only when the observed state is `closed`, because a pulse on an open `toggle` gate closes it.
+  - `toggle` or `unknown`, without status: pulsed once and reported `unverified` with `held: false`. That is one open cycle, not a hold, and on a gate that happened to be open it is a close; the outcome list says so, so the control room knows which gates need a person.
+- Hold: while active, an `open_only` device is re-pulsed before its autoclose expires (a few seconds inside `autoclose_s`, never faster than its minimum command interval; every `hold_reissue_interval_s` when `autoclose_s` is not recorded), so it stays open without cycling. Any other device that reports `closed` for more than `hold_grace_s` (default 20 s) is re-opened, at most once per `hold_reissue_interval_s` (default 30 s). Booms and gates are never auto-closed.
+- `close` commands from ordinary clients are rejected with `409 site_evacuating` while active.
+
+**`lockdown`** (fail-secure direction, with egress protection)
+- Precondition: the site has `emergency_config.egress_reviewed_at` set (someone with `owner`/`admin` has reviewed which devices are egress routes and confirmed the `pulse_mode` of every other device). Otherwise `422 egress_not_reviewed`. The review is cleared, with a `site.updated` event (`data.egress_review_invalidated: true`) and a console warning, whenever a device is added to or removed from the site or a device's `egress`, `kind` or `controls.pulse_mode` changes, so a lockdown never runs on a device set nobody has looked at. `evacuate` has no precondition.
+- Devices with `egress: true` are **never** held closed and keep accepting outbound commands and exit triggers for the whole lockdown. Default: `egress = true` for `kind: door`, `false` for gates and booms; the platform sets it per device.
+- Every non-egress device is handled by what a command can actually do to it:
+  - native `closed` hold (`capabilities.hold` includes `closed`): `provider.setHold("closed")`, whatever the pulse mode;
+  - `toggle` with status: closed if observed open, then held: a device observed `open` for more than `hold_grace_s` is re-closed, at most once per `hold_reissue_interval_s`. A re-close pulse that lands on a gate in mid-travel stops or reverses it, so the hold can take two cycles to settle; the device counts as held only once `closed` is observed;
+  - `open_only`: **never pulsed**. A pulse would re-open the gate or restart its autoclose timer, so a hold loop would keep it open. Commands are refused (below) and the motor's own autoclose closes it; outcome `relies_on_autoclose`, with the observed state where the device reports one;
+  - `unknown`, `toggle` without status, or no `close` at all: nothing is sent; outcome `unsupported` with the reason. Lockdown still refuses commands to it (below).
+
+  Motors keep their own obstruction protection; Fluss Ctrl never shortens a provider's safety timing. Devices that support `lock` (connector providers, post-launch) are locked.
+- The response makes all of this visible, so a control room never believes a gate is secured when it is not.
+- While active, commands on non-egress devices are rejected with `409 site_lockdown` unless the token has `emergency:manage` or the command carries a grant with `emergency_exempt: true` (security staff, medical, armed response). Each refusal is written as `access.denied` with `data.reason = "site_lockdown"`, so the log shows who tried to move during the incident.
+- Honesty rule: lockdown governs Fluss Ctrl-issued commands and Fluss Ctrl-held grants. Access through a vendor's own app (a Fluss+ owner opening from the Fluss+ app) is outside this system unless the provider supports a remote lockdown (SPEC §12.3 item 7 asks the existing backend for exactly that). The per-device outcome says `vendor_access: "suspended" | "not_controlled"` so this is never hidden.
+
+**Both modes**
+- Events: `site.emergency_started { mode, reason, device_count }`, `site.emergency_updated` (mode replaced, or a device outcome changes), `site.emergency_ended`, plus the normal `command.*` events with `emergency_id`. `site.emergency_reminder` fires every 30 minutes while an emergency is active, because a forgotten lockdown is its own incident. No automatic expiry.
+- Emergency events and `access.denied` during an emergency are delivered through a separate priority queue so they never wait behind routine webhook traffic.
+- Native holds first: where a device's `capabilities.hold` includes the target (`open` for evacuate, `closed` for lockdown), the DO calls `provider.setHold()` once instead of re-issuing commands. Many gate motors already have a hold-open/party mode and a lockout mode; using them avoids cycling a boom every 30 s. Re-issuing is the fallback, not the default.
+- The `DeviceCoordinator` for each device owns the hold logic (SPEC §7.2); the site-level record in `site_emergencies` is the source of truth for whether a hold is active.
+- Load target: on a 200-device site every device is `sent` within 5 s of the request and terminal within its own send timeout plus confirm window (about 20 s for an evacuation with default timeouts).
+
+### Events
+- `GET /events?site_id=&device_id=&subject_id=&type=&since=&until=&occurred_since=&occurred_until=` (cursor pagination). Ordered by `recorded_at` (ingest order), which is also what the cursor follows, so a consumer tailing the log never misses an event that arrives late. `since`/`until` filter on `recorded_at`; `occurred_since`/`occurred_until` filter on device time. `since` is required if no other filter is given; max window 31 days per page request.
+- `GET /events/{id}`
+- `POST /events/export` `{ filters, format: "json|csv" }` → async job, result URL delivered by webhook `export.completed` and in the console.
+
+### Webhooks
+- `GET /webhooks`, `POST /webhooks` `{ url, event_types[], description }` → returns `secret` once.
+- `PATCH /webhooks/{id}`, `DELETE /webhooks/{id}`, `POST /webhooks/{id}/rotate-secret`, `POST /webhooks/{id}/test`.
+- `GET /webhooks/{id}/deliveries?status=`, `POST /webhooks/deliveries/{id}/replay`.
+
+### Meta
+- `GET /health` (no auth; shallow), `GET /health/deep` (ops; DB + providers).
+- `GET /providers` → provider list with capability summaries and onboarding mode.
+- `GET /usage` → current period device-months and command counts. (Phase 3.)
+
+## 5. Data model (Postgres, Drizzle)
+
+Every table: `id`, `created_at`, `updated_at`; soft-delete via `archived_at` where noted. All org-scoped tables carry `org_id` and every query filters by it (enforced by a repository layer; no raw access from routes). Row-level security as a second line of defence: the API connects as a role that neither owns the tables nor has `BYPASSRLS`, and sets the org context with `set_config('app.org_id', …, true)` inside each transaction (Hyperdrive resets session state when a connection goes back to the pool, so a session-level `SET` cannot be relied on). Migrations run as a separate owner role over a direct connection, not through Hyperdrive. Tables are created in the phase that first uses them (§0).
+
+```
+organisations   id, name, region, status (trial|active|overdue|read_only|suspended|churned), plan, price_per_device_month,
+                retention_days (default 365), billing_provider, token_epoch int, settings jsonb (entitlements),
+                sandbox_of (org id | null; set on the paired sandbox org, §1)
+clients         id, org_id, name, env (live|sandbox; follows the owning org), default_scopes text[], status, created_by,
+                allow_anonymous_commands bool
+client_secrets  id, client_id, hash, salt, last_used_at, revoked_at, expires_at
+members         (Better Auth tables) + org_members(user_id, org_id, role)
+sites           id, org_id, name, address, timezone, emergency_config jsonb, metadata, archived_at
+providers       code, name, onboarding_mode, enabled, config_schema jsonb
+provider_links  id, org_id, site_id, provider, status (pending_challenge|active|needs_reauth|revoked),
+                identity jsonb (e.g. owner phone, E.164), consent jsonb ({ method: vendor_otp|fc_otp|oauth|api_key, verified_at }),
+                credentials_enc, credentials_expires_at, client_identity_enc (per-link synthetic device UUID/model string),
+                external_account_ref, last_sync_at, sync_state jsonb (poll cursors), challenge jsonb (hash, attempts, expires_at)
+connectors      id, org_id, site_id, provider, enrolment_token_hash, last_seen_at, version, status
+controllers     id, org_id, site_id, provider, provider_ref (vendor's unit id), serial, firmware,
+                online bool, last_seen_at, diagnostics jsonb (rssi, ssid, ip …),
+                consent jsonb (the owner's choices at claim: share_actor_identity, by, at), metadata, archived_at
+                UNIQUE(provider, provider_ref) WHERE archived_at IS NULL
+                -- the physical unit. A Fluss+ controller exposes up to three outputs.
+                -- the index is partial so that an archived controller can be claimed again (an estate
+                -- changing platform); a live duplicate is `409 controller_already_claimed`. Per datastore.
+devices         id, org_id, site_id, controller_id, channel (provider-defined, e.g. `main`, `io:1`, `button:2`),
+                channel_role (main|pedestrian|switch|other|null), group_id,
+                name, kind, egress bool, controls jsonb, capabilities jsonb, last_status jsonb, metadata, archived_at
+                UNIQUE(controller_id, channel)
+                -- the access point platforms talk to; `online` is derived from the controller.
+device_groups   id, org_id, site_id, name, metadata, archived_at
+subjects        id, org_id, external_id, name, phone, email, metadata, erased_at
+                UNIQUE(org_id, external_id)
+grants          id, org_id, site_id, subject_id, device_id|null, group_id|null, type, status,
+                valid_from, valid_until, schedule jsonb, max_uses, uses, reserved, delegation jsonb, parent_grant_id|null,
+                emergency_exempt bool, provider_sync jsonb, revoked_at, revoked_reason, created_by_client_id
+                CHECK ((device_id IS NULL) <> (group_id IS NULL))
+commands        id, org_id, site_id, device_id, subject_id, grant_id, action, params jsonb,
+                state, verification_level, requested_at, sent_at, acked_at, completed_at,
+                outcome jsonb, error_code, idempotency_key, client_id, actor jsonb (human/agent), emergency_id
+                UNIQUE(client_id, idempotency_key)
+events          id, org_id, site_id, device_id, subject_id, grant_id, command_id, type, method,
+                result, occurred_at, recorded_at, data jsonb, pseudonymised_at
+                PRIMARY KEY (id, recorded_at); PARTITION BY RANGE (recorded_at), monthly, plus a default partition;
+                indexes (org_id, recorded_at desc), (device_id, recorded_at desc), (subject_id, recorded_at desc),
+                (org_id, occurred_at)
+                -- `recorded_at` is the time inside the UUIDv7 id, so a lookup by id prunes to one partition.
+                -- `occurred_at` is device-reported and can be late or wrong: data, never a partition key.
+ingested_refs   controller_id, provider_event_ref, event_id, recorded_at
+                PRIMARY KEY (controller_id, provider_event_ref)   (ingest dedup, §8.1; pruned after 90 days)
+webhook_endpoints id, org_id, url, secret_hash, previous_secret_hash, previous_secret_expires_at,
+                event_types text[], status, failure_count, description
+site_emergencies id, org_id, site_id, mode, started_at, ended_at, reason, started_by, ended_by,
+                config_snapshot jsonb, outcome jsonb (per device)
+webhook_deliveries id, endpoint_id, event_id, attempt, status (pending|queued|delivered|failed|dead), response_code, next_attempt_at,
+                last_error, delivered_at  (partitioned monthly; 90-day retention)
+                -- written `pending` in the same transaction as the event (outbox, §8.2)
+idempotency_keys client_id, key, request_hash, response jsonb, expires_at   (non-command POSTs, 24 h; a command carries its own key)
+usage_daily     org_id, day, device_months_fraction, controller_months_fraction, command_count, event_count
+metrics_daily   day, org_id|null, provider|null, metric, value   (rollups for the admin dashboard and the metrics feed)
+invoices        id, org_id, period_start, period_end, device_months, amount, currency, status (draft|sent|paid|overdue|void),
+                provider (paystack|stripe), provider_ref, issued_at, due_at, paid_at
+payments        id, invoice_id, provider, provider_ref, amount, status, at
+billing_adjustments id, org_id, invoice_id|null, amount, reason, created_by
+org_notes       id, org_id, author_id, text, at
+audit_log       id, org_id, actor_type, actor_id, action, target, reason, data jsonb, at
+```
+
+Encryption: provider credentials encrypted with a per-region KMS-style key held in Workers secrets (envelope encryption, AES-GCM via WebCrypto). Secrets never logged.
+
+## 6. Grants and access types
+
+A grant answers: *which subject* may do *what* at *which device/group*, *when*, and *how many times*.
+
+| `type` | v1 | Fields used | Meaning |
+|--------|----|-------------|---------|
+| `full_access` | yes | `delegation.can_delegate = true, unrestricted` | Permanent; may create/adjust/revoke any grant on the same device/group (owner-level). Maps to Fluss+ "Full access". |
+| `permanent` | yes | — | No expiry. |
+| `time_window` | yes | `valid_from`, `valid_until` | Single window. |
+| `recurring` | yes | `schedule` | Repeating windows, e.g. Mon–Fri 07:00–17:00 in the site timezone. Optional outer `valid_from/until`. |
+| `count_limited` | yes | `max_uses`, optional `valid_until` | Consumed on each successful access. |
+| `tenant_access` | **modelled, not exposed** | `delegation` with limits | Permanent; may create `time_window` (≤ `max_sub_duration_s`) or `count_limited` (≤ `max_sub_uses`) grants only. Exposed in v1.1 once Fluss+ semantics are confirmed. |
+
+Schedule shape:
+```json
+{ "timezone": "Africa/Johannesburg",
+  "windows": [ { "days": ["mon","tue","wed","thu","fri"], "start": "07:00", "end": "17:00" } ] }
+```
+
+Delegation shape (present on `full_access`; reserved for `tenant_access`):
+```json
+{ "can_delegate": true, "allowed_types": ["time_window","count_limited","permanent","recurring"],
+  "max_sub_duration_s": null, "max_sub_uses": null }
+```
+Delegation is expressed by the platform: `POST /grants` accepts `parent_grant_id`, meaning "the holder of that grant is sharing access". Fluss Ctrl then enforces the parent's `delegation`: the parent must be active and `can_delegate`, the new type must be in `allowed_types`, the target must be the parent's device or group (or a device inside the parent's group), and window and uses must sit inside the parent's limits; otherwise `422 delegation_not_allowed`. Without `parent_grant_id` the grant is created on the platform's own authority (`grants:write`). Delegated grants record `parent_grant_id`; revoking a parent revokes its children.
+
+Semantics
+- `status`: `active | scheduled | expired | exhausted | revoked`. Computed on read; stored on transition for indexing.
+- Evaluation (`isGrantValidAt(grant, at, siteTz)`) lives in `packages/core` and is pure. It is the single function used by the API, by the console, by provider sync, and by conformance tests.
+- A `count_limited` grant reserves a use atomically when the command is accepted (`UPDATE grants SET reserved = reserved + 1 WHERE id = $1 AND uses + reserved < max_uses`; no row updated means `rejected` with `grant_exhausted`). The reservation is committed (`uses + 1`, `reserved - 1`) when the command reaches `confirmed`, or `unverified` on a device that cannot reach `confirmed`, and released on `unconfirmed`, `timed_out`, `rejected` or `failed`, or on a success where nothing was actuated because the device was already in the target state (§7.1). Checking before enqueue and decrementing seconds later would let concurrent commands overspend the grant, and per-device serialisation gives no protection across the devices of a group. The command response says which happened.
+- When a command names a subject but no grant, the subject's valid grant for that device is chosen in this order: `full_access`, `permanent`, `recurring`, `time_window`, `count_limited`, so a use is never spent when a non-consuming grant would do. The command records the grant used.
+- Revocation is immediate in Fluss Ctrl and asynchronous at the provider when `supports_remote_grant_sync` is true (e.g. an on-panel credential). `grant.provider_sync` records `{ state: "pending|synced|failed", at, error }` and the webhook `grant.sync_failed` fires on failure.
+- Grants never grant more than the device's `capabilities.supports_grant_types`. Creating one outside that set → `422 grant_type_unsupported`.
+- `emergency_exempt: true` lets a grant's subject command non-egress devices during a lockdown (security staff, medical, armed response). Creating or setting it requires `emergency:manage`.
+
+What a grant is *not*: it is not the physical credential. In v1 the platform asks Fluss Ctrl to act (`POST …/commands` with `subject_id`); Fluss Ctrl checks the grant and acts. On-panel credential issuance (cards, PINs) is provider-specific and arrives with the connector providers.
+
+## 7. Commands and verification
+
+Actions in v1: `trigger` (pulse the output), `open`, `close`. `lock` and `unlock` are reserved for door controllers that arrive with the connector providers. A device advertises which actions it supports. `open` and `close` are state-checked: a device already in the target state succeeds without a provider call (§7.1). `close` needs a device that reports status and a motor that a command can actually close. A provider with a discrete close qualifies, and so does a pulse where `controls.pulse_mode` is `toggle`. Where it is `open_only`, a pulse can only open the gate or extend its autoclose, so `close` is not offered. Where it is `unknown`, `close` is still offered, for parity with the existing Fluss API, and its result is honest: `unconfirmed` if the gate does not close.
+
+### 7.1 State machine
+
+```
+queued ─▶ sent ─▶ acked ─▶ confirmed   (effect observed)
+   │        │        ├──▶ unconfirmed (device reports status, but the effect was not observed in the window)
+   │        │        └──▶ unverified  (device cannot report effect)
+   │        ├────────────▶ confirmed | unconfirmed  (no device ack exists, but the device reports status: verified from `sent`)
+   │        ├────────────▶ unverified  (level `none`)
+   │        └────────────▶ timed_out  (an ack was expected and none arrived)
+   ├─────────────────────▶ confirmed  (already in the target state; nothing sent)
+   └─────────────────────▶ rejected   (grant invalid or exhausted, device offline, rate limited, unsupported, site_lockdown, site_evacuating, provider disabled or unavailable)
+ any non-terminal ──────▶ failed      (provider error)
+```
+
+Terminal: `confirmed | unconfirmed | unverified | timed_out | rejected | failed`. Only `confirmed`, and `unverified` on devices that cannot confirm, count as success for grants and metrics; `unconfirmed` is the important one for safety, because it means "the device heard us and the gate still didn't move".
+
+Already in the target state: `open` on a device observed open, or `close` on one observed closed, is a success and not a rejection: terminal `confirmed` with `outcome.evidence = "already_in_state"`, no provider call, `sent_at` and `acked_at` null. `access.granted` is written, because the subject was let through an open gate and the log should say so. A `count_limited` grant is not consumed, since nothing was actuated (§18 item 14). The status read happens inside the coordinator, so two residents arriving together both get a success and the gate is pulsed once.
+
+Verification levels (per device, declared by provider):
+- `none`: provider cannot even confirm receipt (fire and forget). Terminal state after send is `unverified`.
+- `ack`: provider/device acknowledged the command. Terminal `unverified` (no way to observe the effect).
+- `status`: device reports state; the coordinator polls/awaits status and marks `confirmed` when the observed state matches the intended effect (`open`/`close`) or, for `trigger`, when a state transition is observed, inside the confirm window for that action; otherwise `unconfirmed`. The window is per action because a gate reports `closed` only at the end of its travel: defaults are 10 s for `open` and 45 s for `close`, and `trigger` takes the `open` window when the device was closed beforehand and the `close` window when it was open. Overridable per provider and per device (`capabilities.confirm_window_s`).
+- Where a dedicated sensor (relay feedback, beam, magnet) confirms the physical action, the level is still `status`; `outcome.evidence` says `sensor` instead of `status_poll`. Three levels only, to keep the contract simple for partners.
+- A provider that returns no device acknowledgement (`capabilities.ack = false`: the unofficial clouds only confirm that the cloud accepted the request) skips `acked`. `acked_at` stays null and, where the device reports status, verification runs from `sent`.
+
+Command response (always includes what was verified):
+```json
+{ "id": "cmd_…", "device_id": "dev_…", "action": "open", "state": "confirmed",
+  "verification_level": "status",
+  "outcome": { "observed_state": "open", "observed_at": "…", "evidence": "status_poll" },
+  "requested_at": "…", "sent_at": "…", "acked_at": "…", "completed_at": "…",
+  "subject_id": "sub_…", "grant_id": "grt_…" }
+```
+
+### 7.2 Execution
+
+- Every device has a `DeviceCoordinator` Durable Object (keyed by `dev_…`). All commands for a device pass through it. It enforces the minimum interval, serialises execution (no concurrent commands to one device), holds the in-flight command, and performs verification by calling `provider.getStatus()` (or consuming a provider push if available) until the confirm window for that action elapses. The in-flight command, the hold state and the next alarm live in the object's durable storage, not in memory: a deploy or an eviction restarts the object, and verification resumes from storage. Verification is alarm-driven, never an in-memory loop.
+- Grant check happens **before** enqueue (fast reject). The DO re-checks at execution time if more than 5 s have passed (expiry edge cases).
+- Provider timeouts: `send_s` default 8; confirm windows per action as in §7.1. Overridable per provider and per device.
+- A `trigger` without `subject_id` is allowed only with scope `commands:write` on a client flagged `allow_anonymous_commands` (for control-room use). It is logged with `method: "api"` and `subject_id: null`.
+- Emergency hold: when the site has an active emergency, the DO enters `hold` mode (`open` or `closed` target). It bypasses the minimum interval for emergency-issued commands, keeps serialisation, and runs an alarm every `hold_reissue_interval_s` that re-issues the target action only if the last observed state has contradicted the target for longer than `hold_grace_s`. Egress devices ignore `closed` targets entirely. Ordinary commands arriving during a hold are rejected with the mode's code before reaching the provider. What is re-issued, and whether anything is, follows the pulse-mode rules in §4: an `open_only` device is re-pulsed inside its autoclose time in an evacuation and is never pulsed in a lockdown.
+- Ambiguous sends: if `sendCommand` times out or errors after the request may have reached the vendor, and the device reports status, the coordinator still watches for the confirm window: `confirmed` if the effect is observed, otherwise `failed` with `outcome.ambiguous = true`. The docs tell clients not to retry a `trigger` blindly after an ambiguous failure, because a second pulse can undo the first: read status first, or use `open`.
+- Reconciliation: a Cron sweep marks any command still non-terminal 60 s after its send timeout plus confirm window as `failed` (`error_code: coordinator_lost`), releases its grant reservation (§6) and emits the events, so a lost coordinator never leaves a command or a reserved use hanging.
+- Events written: `command.requested`, `command.sent`, `command.acked`, `command.completed` (with terminal state), plus `access.granted` / `access.denied` when a subject is involved. Each event is written in one transaction with the state change and its pending webhook deliveries (§8.2).
+
+### 7.3 Rejections: HTTP error or command state
+
+One rule, so that clients have one thing to check: **an error status means it did not happen and says why; a 2xx means the command was accepted, and `state` says how it ended.**
+
+- Before a command exists: authentication and scope (`401`/`403`), validation (`422`), unknown device (`404`), per-client rate limit (`429`), idempotency conflicts (§1). Nothing is recorded as a command.
+- Rejections known at accept time: the response is the HTTP error in the table, and the problem body carries `command_id`. The command is still recorded, in state `rejected`, with `access.denied` where a subject is involved, so every attempt is in the log.
+- Rejections discovered after the `202` (the provider reports the unit offline, the grant expired before execution): there is no response left to fail, so the command ends `rejected` with the same `error_code`. Clients see it through `?wait=`, `GET /commands/{id}` or the `command.completed` webhook.
+- `?wait=` returns `200` with the command if it is terminal when the response is sent, whatever the state, and `202` if it is not.
+
+| `code` | HTTP status at accept time | Cause |
+|--------|---------------------------|-------|
+| `grant_invalid` | 403 | no valid grant for this subject, device and time |
+| `grant_exhausted` | 403 | `count_limited` grant has no uses left (§6) |
+| `device_offline` | 409 | controller known to be offline |
+| `command_rate_limited` | 409 | inside the device's minimum interval |
+| `action_unsupported` | 422 | action not in `capabilities.actions` |
+| `site_lockdown`, `site_evacuating` | 409 | active emergency (§4) |
+| `provider_disabled` | 409 | kill switch (§14) |
+| `provider_unavailable` | 503 | circuit breaker open (§21.5) |
+
+## 8. Events and webhooks
+
+### 8.1 Event types (v1)
+
+```
+access.granted        access.denied
+command.requested     command.sent     command.acked     command.completed
+device.online         device.offline   device.status_changed   device.claimed   device.archived
+grant.created         grant.updated    grant.revoked    grant.expired   grant.exhausted  grant.sync_failed
+subject.created       subject.updated  subject.erased
+provider_link.created provider_link.needs_reauth   provider_link.revoked   provider.disabled
+site.created          site.updated     site.emergency_started   site.emergency_updated   site.emergency_ended   site.emergency_reminder
+webhook.endpoint_disabled (after 7 days of failures)
+export.completed
+```
+
+Event envelope:
+```json
+{ "id": "evt_…", "type": "access.granted", "occurred_at": "…", "recorded_at": "…",
+  "org_id": "org_…", "site_id": "site_…", "device_id": "dev_…",
+  "subject_id": "sub_…", "grant_id": "grt_…", "command_id": "cmd_…",
+  "method": "api|app|pin|card|remote|intercom|plate|wiegand|manual|unknown",
+  "result": "ok|denied|error|unknown",
+  "data": { … type-specific … }, "schema_version": 1 }
+```
+
+`occurred_at` is when it happened at the device (provider-reported where available); `recorded_at` is when Fluss Ctrl stored it. Provider-originated events (someone opened the gate from the Fluss+ app) are ingested through provider push or polling and appear with `method` set accordingly — this is what makes Fluss Ctrl the log of record, not just a log of API calls. Lists and cursors follow `recorded_at` (§4), so an event that arrives late is never skipped.
+
+Ingestion is idempotent and does not double-count. Every ingested entry is keyed by controller and vendor event reference in `ingested_refs`, so a re-poll after a failure inserts nothing. A vendor log entry that is only the echo of a Fluss Ctrl command (the Fluss+ log shows `Api Trigger` with the `flussctrl cmd_…` marker from §12.2; other providers match on `provider_ref`, or on action and time) is attached to that command as `data.provider_echo` instead of becoming a second access event.
+
+### 8.2 Delivery
+
+- Outbox: the event row and one `webhook_deliveries` row per matching endpoint (status `pending`) are inserted in the same database transaction as the state change that caused them. A dispatcher moves `pending` rows onto the queue: a best-effort enqueue straight after commit, backed by a Cron sweep every minute for anything left behind. A crash between commit and enqueue therefore delays a webhook and never loses it.
+- Standard Webhooks: headers `webhook-id`, `webhook-timestamp`, `webhook-signature` (`v1,<base64 HMAC-SHA256>`), secret shown once, rotation with overlap.
+- Body is the event envelope. One event per request. Deliveries ordered best-effort; consumers must be idempotent on `id`. `webhook-id` is the event id and stays the same across retries and replays.
+- Retries via Queues: 1 m, 5 m, 30 m, 2 h, 6 h, 24 h (6 attempts), then DLQ. Endpoint auto-disabled after 7 days of continuous failure (`webhook.endpoint_disabled` emitted to the org's other endpoints and shown in console). Manual and bulk replay from console or API.
+- Timeout per delivery 10 s; 2xx = success; 410 = disable endpoint immediately.
+- SSRF guard: endpoint URLs must be `https://`, resolve to public addresses (private, loopback, link-local and cloud-metadata ranges rejected) both at creation and at delivery time, and redirects are not followed.
+- Sandbox events deliver only to sandbox endpoints.
+- Two queues: `webhooks` and `webhooks-priority`. Emergency events and `access.denied` during an active emergency go to the priority queue; same retry policy, separate backlog.
+
+## 9. Regions, latency and limits
+
+- `region` is set at org creation: `za`, `us`. It is a routing label carried in the token (`region` claim); `region → datastore` (Hyperdrive binding, Queue set) is configuration in `wrangler.toml`, never code.
+- Initial mapping (build, beta, US launch): `za` and `us` both → one Neon project in `us-east-1`. The Worker is pinned beside the DB with an explicit placement hint (`placement.region = "aws:us-east-1"`), so a request from anywhere pays one intercontinental round trip, not one per query. Smart Placement is not used: it decides from traffic arriving at several locations and only considers places where the Worker has already run, and beta traffic comes almost entirely from South Africa. Coordinators are created with a `locationHint` for the same area (the hint is honoured only on an object's first `get()`).
+- Hyperdrive: query caching is **disabled** on the binding the API uses. Hyperdrive caches reads for up to a minute by default and does not invalidate them on writes, so a revoked grant or an old `token_epoch` could read as valid. A second, cached binding may be added later for reads that are safe to serve stale (the provider list); never for auth, grants, devices or commands.
+- Expected latency: US callers 10–40 ms to the API; Johannesburg callers ~220–250 ms per call. Provider calls leave from beside the DB, so each call to an SA-hosted vendor cloud or backend is an intercontinental round trip of its own (more on a cold connection); the `acked` budget below includes it. Device time still dominates end-to-end for commands.
+- Latency budget (measured externally from Johannesburg and from US East):
+  - `GET /devices/{id}` p95 ≤ 350 ms from ZA, ≤ 120 ms from US (cached status).
+  - `POST …/commands` to `202` p95 ≤ 450 ms from ZA, ≤ 150 ms from US.
+  - Time to `acked` p95 ≤ 2.5 s for Fluss+ (device time plus the provider round trip from US East).
+- Measured, not assumed: a Phase 0 spike (placement hint, Hyperdrive, Neon, one coordinator, one call to the existing Fluss API) records these numbers from Johannesburg and US East, and the Phase 2 synthetic checks keep recording them. If ZA measurements exceed budget, or an SA customer requires in-country data: create the `za` datastore on AWS Cape Town (Aurora Serverless v2 or RDS), run the `region-add` runbook (migrate ZA orgs' rows, flip mapping, verify, retire). A second datastore also means a second deployment of the API Worker placed beside it (a Worker has one placement), with a thin router at the edge dispatching on the token's `region` claim. At the time of writing Durable Objects do not run in Africa (an `afr` hint lands in a nearby region), so coordinators for ZA orgs would sit outside Africa, most likely in Europe; the spike measures that path too before anyone counts on ~20 ms. Design rule: nothing may assume all orgs share one database (no cross-org queries, no global sequences, usage rollups per region).
+- Postgres stays vanilla: core + standard contrib extensions only, every table has a primary key, no unlogged tables, no vendor-specific features — so moving to RDS or self-hosted is `pg_dump`/logical replication. Revisit self-hosting when managed spend exceeds ~$2k/month.
+- Workers limits to design around: 128 MB memory, CPU-time limits, subrequest caps; never do bulk work in a request handler — hand it to Queues or a Durable Object alarm.
+
+## 10. Provider interface
+
+Providers live in `packages/providers/<code>` and implement:
+
+```ts
+export interface Provider {
+  readonly code: ProviderCode;                       // "simulator" | "fluss_plus" | "gemini" | …
+  readonly onboarding: "claim_code" | "account_link" | "connector";
+  readonly stability: "official" | "partner" | "unofficial";   // unofficial = reverse-engineered, no vendor contract
+  describe(): ProviderDescriptor;                    // capabilities defaults, timeouts, config schema
+
+  // Onboarding
+  claim?(input: ClaimInput): Promise<ExternalDevice>;                   // claim_code
+  // account_link: one-shot (API key / OAuth) or two-phase (OTP). Linking must prove the linker controls the account
+  // (see 10.3); a vendor whose own login does not prove that gets a Fluss Ctrl OTP via Twilio before beginLink.
+  beginLink?(input: LinkInput): Promise<{ link: ExternalLink; devices: ExternalDevice[] } | { challenge: LinkChallenge }>;
+  completeLink?(challenge: LinkChallenge, answer: string): Promise<{ link: ExternalLink; devices: ExternalDevice[] }>;
+  refreshCredentials?(link: ExternalLink): Promise<ExternalLink>;        // token refresh / re-derive access keys
+  discover?(link: ExternalLink | Connector): Promise<ExternalDevice[]>;
+  unlinkDevice(device: DeviceRef): Promise<void>;
+
+  // Runtime
+  getStatus(device: DeviceRef): Promise<DeviceStatus>;                  // { state, observed_at, online }
+  sendCommand(device: DeviceRef, cmd: CommandRequest): Promise<SendResult>; // { acked: boolean, provider_ref?, error? }
+  // Optional push: provider calls back into /providers/{code}/ingest (status + access events)
+  verifyIngestSignature?(req: Request): Promise<boolean>;
+  parseIngest?(body: unknown): Promise<IngestedEvent[]>;
+  // Optional poll (providers with a log endpoint but no push): cursor is persisted in provider_links.sync_state
+  pollEvents?(link: ExternalLink, cursor: string | null): Promise<{ events: IngestedEvent[]; cursor: string | null }>;
+
+  // Optional native hold (motor hold-open / lockout modes); target null clears it
+  setHold?(device: DeviceRef, target: "open" | "closed" | null): Promise<SendResult>;
+
+  // Optional grant sync (devices that hold credentials locally)
+  syncGrant?(device: DeviceRef, grant: GrantSyncRequest): Promise<SyncResult>;
+  revokeGrant?(device: DeviceRef, grantRef: string): Promise<SyncResult>;
+
+  health(): Promise<ProviderHealth>;
+}
+```
+
+Rules
+- Providers are stateless and receive decrypted credentials per call. They never touch the database.
+- Providers must never throw raw vendor errors; map to `ProviderError` with a stable `code` (`offline`, `timeout`, `unauthorised`, `unsupported`, `rate_limited`, `vendor_error`) and keep the vendor payload in `detail` for ops.
+- All outbound HTTP goes through `packages/core/http` (timeouts, retries where safe — never retry a `sendCommand`, tracing, redaction).
+- A provider ships only with: a conformance run, a recorded-fixture test suite, a `README.md` (onboarding mode, credentials, quirks, rate limits), and a `ProviderDescriptor`.
+
+### 10.1 `ProviderDescriptor`
+
+```ts
+{ code, name, onboarding, stability, capabilities: { actions, status, ack, verification_level, min_command_interval_s,
+  supports_grant_types, supports_remote_grant_sync, hold: ("open"|"closed")[], push: boolean, poll_status_interval_s },
+  timeouts: { send_s: 8, confirm_window_s: { trigger: 10, open: 10, close: 45 } }, config_schema: ZodSchema, docs_url }
+```
+Devices may override capabilities per device after discovery (e.g. a Fluss+ unit with a status sensor vs one without). A device's `controls.pulse_mode` also removes `close` from its `actions` when the motor is `open_only` (§7).
+
+### 10.2 Simulator
+
+- In-process provider used by every sandbox org. Devices created in console/API with `behaviour`:
+  `{ online: true, verification_level: "status", latency_ms: 300, fail_rate: 0, status_model: "gate_slow|door_lock|none", pulse_mode: "toggle|open_only", autoclose_s: 15, travel_s: 12 }`.
+- The simulated gate honours its pulse mode (a pulse on an open `open_only` gate restarts autoclose and cannot close it; a pulse on a moving `toggle` gate stops it) and reports `closed` only after `travel_s`, so per-action confirm windows, already-in-state and both emergency modes are testable without hardware.
+- Supports forcing outcomes via `params.simulate = "timeout|offline|reject|no_status|ambiguous"` for integration tests.
+- Emits provider-originated events on a timer (e.g. a simulated app open every N minutes) so webhook consumers can be tested against third-party-originated access.
+
+### 10.3 Onboarding modes
+
+| Mode | Used by | Flow |
+|------|---------|------|
+| `claim_code` | Fluss+ (incl. Centurion retrofit, Wiegand bridge, intercom) | Platform calls `POST /devices/claim` with serial + claim code. For a unit with **no owner** in the Fluss+ backend, the code printed on the unit is accepted. For a unit that **already has an owner**, only a one-time code that owner generates in the Fluss+ app is accepted (short-lived, single use; the app shows which platform is asking and the consent choices, §14). The printed code is then refused with `409 controller_owned`, because a printed code is a static secret that anyone who has seen the unit can read. Existing backend validates and transfers control to the Fluss Ctrl service account for that org. Existing partners migrate with their current API key instead (§4, §12.3 item 1b). |
+| `account_link` | Gemini, Nice, Comb, Accentronix, Centurion (MyCentsys Remote) | Platform (or Fluss ops on its behalf) links the vendor account: OAuth redirect where the vendor supports it; vendor API key submitted once; or an OTP challenge sent to the account owner's phone (two-phase). Devices imported; periodic `discover()` for new ones. Proof of control is mandatory: if the vendor's login does not prove the linker controls the account (as with Accentronix), Fluss Ctrl sends its own OTP to that phone first and records `consent.method = "fc_otp"`. The link identity (owner's phone) is shown in the console and carried in the audit log of every command issued through it. |
+| `connector` | Impro, Gallagher, Paxton | Console issues an enrolment token for a site. A small connector service (Node, Docker, or a Fluss+ bridge unit) runs on the estate network, enrols, discovers doors/panels, and maintains an outbound connection; Fluss Ctrl never needs inbound access to the LAN. Connector design is its own spec (post-launch, Q2 2027). |
+
+## 11. Testing and quality
+
+Non-negotiable; CI blocks merge on any failure.
+
+1. **Unit** (Vitest): grant evaluation, schedules (DST edges), command state machine, emergency holds (from Phase 4), idempotency, signature generation/verification, error mapping. Coverage is posted as a PR comment on changed lines and treated as a guide (company standard); the exception is a hard floor on `packages/core`, where a missed branch can open or lock a gate.
+1a. **Property-based** (fast-check): grant/schedule evaluation against random dates and timezones, idempotency replays, Standard Webhooks signature parsing, and every vendor response parser (Centurion's `|`-joined base64 and double-encoded JSON, Accentronix's pseudo-JSON `DeviceState`).
+2. **Contract**: every route's request/response validated against the committed `openapi.json` in tests; `oasdiff` fails CI on breaking changes without a `/v2` path; Spectral lint on the spec.
+3. **Provider conformance kit** (`packages/conformance`): one Vitest suite parameterised by provider. Covers: status read, each supported action, verification outcomes, offline handling, timeout mapping, idempotent claim/link, unlink, error codes, push ingest signature rejection, already-in-state success, per-action confirm windows, `count_limited` reservation under concurrent commands, and, from Phase 4, emergency behaviour (evacuate opens; an `open_only` device is re-pulsed inside its autoclose time in an evacuation and never pulsed in a lockdown; a `toggle` device with status is closed and held; `unknown` and no-status devices are reported `unsupported`; egress devices never held closed). Simulator must pass 100%; real providers run against recorded fixtures (MSW) in CI and against live vendor sandboxes nightly where available.
+4. **Integration** (Vitest + Testcontainers): API against a real Postgres in Docker, locally and in CI; Queues and Durable Objects via `@cloudflare/vitest-pool-workers`/Miniflare. Migrations are applied in CI and are forward-only by policy: expand/contract never needs a down step, and Drizzle Kit has not generated one. What CI proves instead is that the **previous release's** integration suite passes against the **new** schema, because old and new Worker versions run side by side during a gradual rollout and a rollback is a redeploy of the old code. Neon branches are for the preview deployments and e2e, not for integration tests.
+5. **E2E** (Playwright): against the PR preview deployment. Journeys: sign up → create sandbox client → get token → claim simulator device → create grant → command → see webhook delivery → revoke → denied.
+6. **Smoke** (the same Playwright suite, last step of every deploy, every environment): token, list devices, open a sandbox gate, receive its webhook; on the internal ring, trigger the bench Fluss+ unit (relay with loop-back status). Automated tests never actuate a real gate: a deploy at 02:00 must not open the office. Failure alerts and rolls back the deploy (Wrangler versions + gradual rollout).
+7. **Synthetic monitoring**: per-minute HTTP checks (health, token, list devices) from ZA, EU and US on OpenStatus (Starter plan; the free plan is one monitor at ten-minute intervals), feeding the public status page; the scripted smoke journey every five minutes from a runner outside Cloudflare (a scheduled GitHub Actions job), reporting into the same page. Sentry uptime monitors remain the paging source (§21.6).
+8. **Load** (k6): before each phase gate; targets 10× expected launch traffic; command path, webhook fan-out, and a 200-device emergency (every device `sent` within 5 s and terminal within its own send timeout plus confirm window).
+9. **Chaos**: provider timeouts, DB failover (Neon branch reset), Queue backlog, clock skew in signatures.
+10. **Security**: Semgrep CE and gitleaks in CI (fail on high severity), Dependabot alerts and dependency review, SBOM per release, OWASP ZAP baseline against preview, external pen test in Phase 3 with a re-test of emergency modes before GA; STRIDE checklist on every security-sensitive task; the threat model's abuse cases (stolen token, replayed webhook, SSRF via webhook URL, stolen connector enrolment token) each have a test.
+11. **Regression**: every bug gets a failing test first. Fixtures for every partner's real-world payloads are kept (redacted).
+12. **Migrations**: `squawk` lint; expand/contract only; forward-only; every migration applied in CI against a Neon branch with production-shaped data, followed by the previous release's suite (item 4).
+13. **Docs as tests**: quickstart snippets execute in CI against the preview deployment.
+14. **Restore drill**: monthly automated point-in-time restore to a branch plus smoke suite; RTO/RPO recorded.
+15. **Architecture**: `dependency-cruiser` enforces routes → core → db and that providers never import db.
+16. **Portability** (post-launch, once the adapters exist; §21.3): the integration suite runs against both the Cloudflare bindings (Miniflare) and the Postgres-backed adapters on every PR, so the break-glass path cannot rot. Until then the rule is only that nothing outside the platform implementations imports a Cloudflare binding directly (`dependency-cruiser`).
+17. **DR drills**: database failover quarterly in staging and annually in production; break-glass deploy annually in staging once it exists; results recorded in `docs/runbooks/drill-log.md`.
+18. **Hardware canary bench** for unofficial providers: one Accentronix cellswitch and one Centurion G-Ultra on the bench, outputs wired to relays with an input wired back as gate status, plus a Fluss+ unit. The conformance kit runs against the bench nightly and before every release of those providers; a failing canary blocks the release and opens a status-page incident for that provider.
+19. **Vendor contract drift**: every vendor response is validated against the recorded schema; unknown shapes or status strings raise `vendor_contract_drift` (alert, not failure), because reverse-engineered APIs change without notice.
+
+Definition of done for any change (mirrors the GitHub issue template): acceptance criteria met, tests at the right layers, docs updated (guides + generated reference), Conventional Commit with the task ID, preview smoke green, risk level stated in the PR.
+
+Release: each production deploy has a release issue, and the production GitHub Environment requires a reviewer approval before Wrangler runs (the approval is the sign-off; in the solo phase it is the founder's own, a deliberate pause and an audit record). Every production deploy lands on the internal ring (Fluss's own org) before gradual rollout; automated tests there actuate the bench devices only.
+
+## 12. Fluss+ provider and the existing backend
+
+Source: the current `openapi.json` (Fluss API 1.0.0, server `https://v1.fluss-api.com`). Keep that file in `packages/providers/fluss-plus/vendor/openapi.json` and generate the client from it.
+
+### 12.1 What exists today
+
+- Auth: a **user-level** API key (generated in Fluss account settings) in the `authorization` header. Everything is scoped to what that user can see and do.
+- `GET /v1/list` → devices the user can access, each with `userPermissions`: `userType` (owner | tenant | guest), `canOpenMain`, `canOpenPedestrian`, `canUseWiFi`, `canInviteUsers`, `canViewAccessLogs`, `canOperateSwitch`, optional `startDate`/`endDate` (temporary access, epoch ms).
+- `GET /v1/status/{deviceId}` → `internetConnected`, `connectionTimeStamp`, `updatedTimeStamp`, `ipAddress`, `openCloseStatus` (open | closed; absent when the unit has no feedback), `fwv`, `ssid`, `rssi`.
+- `GET /v1/logs?deviceIds=&start=&stop=&cursor=` → per-device logs: `timeStamp`, `userId`, `userName`, `mobileNumber`, `eventType` (e.g. "Api Trigger", "Wi-Fi Trigger", "Api Open", "Api Close"), `metaData`. Scope depends on the caller's permissions; cursor-paginated; nothing before the device was claimed.
+- `POST /v1/trigger/{deviceId}` body `{ metaData ≤ 400 chars, timeStamp? }`; requires `canOpenMain` + `canUseWiFi`; validated against the user's schedule. `POST /v1/open/{deviceId}` and `/close/{deviceId}` require the opposite state (`409` otherwise); all three send the same MQTT trigger (`tr`).
+- Errors: `401`, `403` (permission), `404`, `409` (state), `422` (time range), `424` (device/MQTT dependency failed), `500`.
+- Not in the public surface: claiming, inviting/revoking users, webhooks, pedestrian/switch commands, a definitive device ack.
+
+### 12.2 Mapping to v1
+
+| Existing | Fluss Ctrl v1 |
+|----------|----------------|
+| user API key | OAuth2 client credentials, org-scoped; the provider holds a per-org **service account** key for the existing backend (encrypted in `provider_links`) |
+| `GET /v1/list` device | one `controller` (`provider_ref = deviceId`, firmware/rssi/ssid/ip in `diagnostics`) plus one `device` per output: `main`, `pedestrian` (if `canOpenPedestrian`), `switch` (if `canOperateSwitch`) |
+| `userPermissions` on the service account | controller capabilities. `userType` is `owner` on a claimed unit. A unit imported by migration (§12.3 item 1b) mirrors the legacy key's permissions, so a non-owner import can command and read what that key could, but cannot be unclaimed or extended to further channels until its owner claims it |
+| `openCloseStatus` present | `capabilities.status = true`, `verification_level = "status"`; absent → `"ack"` once the ack exists, `"none"` until then |
+| `GET /v1/status` | `getStatus()`; `internetConnected` → controller `online`; `updatedTimeStamp` → `observed_at` |
+| `POST /v1/trigger` | `sendCommand(action: "trigger")`; `metaData` carries `flussctrl cmd_… sub_…` so the Fluss+ log shows who acted |
+| `POST /v1/open` / `close` | `sendCommand(action: "open" | "close")`. Both are a state-checked pulse, so `close` is offered only where a pulse can close the motor (`controls.pulse_mode`, §7). Vendor `409` → re-read status: if the unit is already in the target state the command is `confirmed` with `evidence: already_in_state` (§7.1), otherwise `failed` |
+| `424` | `ProviderError{ code: "offline" }` → command `rejected` with `device_offline` (HTTP `409` only when the unit was known to be offline at accept time, §7.3) |
+| `403` | `ProviderError{ code: "unauthorised" }` (service account lost access) → `grant.sync_failed`-style alert to ops |
+| `GET /v1/logs` | `pollEvents()` for provider-originated events: poll per active controller (cursor stored in `provider_links.sync_state`), map `eventType` → `method` (`Wi-Fi Trigger` → `app`, `Api *` → `api`), `mobileNumber` → match to a subject by phone where one exists, else `subject_id = null` and `data.actor = { kind: "provider_user", ref }`, with name and phone added only if the unit's owner chose to share them at claim (§14). Entries that echo a Fluss Ctrl command (`Api *` carrying the `flussctrl cmd_…` marker) are attached to that command, not ingested as a second event (§8.1) |
+| owner / tenant / guest + dates + schedule | `full_access` / `tenant_access` (v1.1) / `time_window`, `recurring` — Fluss+ keeps enforcing its own rules for its own app users; Fluss Ctrl enforces grants for API-originated access |
+
+Design consequence: Fluss Ctrl evaluates the grant and acts through the service account, so the existing backend does not need to know Fluss Ctrl subjects. Fluss+ app users keep working unchanged on the same hardware.
+
+### 12.3 Required from the existing backend (to agree with the Fluss team)
+
+Preferably a small internal API with a service-to-service token allow-listed to Fluss Ctrl; otherwise extend the public API. In priority order:
+
+1. **Org service accounts and claim/transfer** — create a service user per `org_id`, and `claim(serial, claim_code)` that grants that user owner-level permissions on the unit (and `unclaim`). The printed code works only while the unit has no owner; a unit that already has one needs a one-time code its owner generates in the Fluss+ app, where the owner sees which platform is asking and chooses whether user names and numbers in the log are shared with it (§10.3, §14). Without this, onboarding is a manual step by Fluss ops.
+   - **1b. Migrate by existing key** — given a partner's current user API key, grant the org's service user the same permissions that key's user holds on every unit it can operate (never more), in one call, and return the units with the permission held on each. This is how MEL, WeconnectU and Storeapp move without collecting a claim code per gate; without it the Phase 3 migrations are a site visit per unit.
+2. **Channel-aware commands** — trigger `pedestrian` and `switch`, not only `main` (the permissions exist; the endpoints don't).
+3. **Definitive ack** — `200` today means "published to MQTT". Return (or expose via a `command_ref` lookup) whether the device acknowledged, so `verification_level` can be `ack` on units without feedback.
+4. **Push** — a webhook or stream for status changes and app-originated access events. Until it exists the provider polls `GET /v1/logs` (every 15–30 s for active controllers) and status during the confirm window; acceptable for beta, not GA (cost, lag, rate limits).
+5. **Rate limits and timeouts** documented for the service account path.
+6. Optional: expose the Fluss+ schedule/temporary-access model so `recurring` and `time_window` grants can be mirrored onto Fluss+ users when a platform also manages app users.
+7. **Site lockdown support** — suspend app access for non-owner users on a list of units (and reinstate), so a Fluss Ctrl lockdown also stops Fluss+ app opens on those gates. Without it, lockdown reports `vendor_access: "not_controlled"` for Fluss+ devices.
+8. **Native holds** — expose the motor's hold-open and lockout modes where the unit supports them (Centurion and Gemini motors have them), so emergencies use one command instead of re-issuing every 30 s.
+
+Beta fallback: one Fluss+ owner account per org, created by Fluss ops, used as the service account on the current public API with log polling. Record as technical debt with a removal date.
+
+## 13. Console and admin dashboard
+
+One app (`apps/console`), two areas: the customer console every platform sees, and `/admin`, visible only to Fluss staff with an ops role.
+
+### 13.1 Customer console (v1)
+
+- Sign up / sign in (passkeys), create org, invite members with roles.
+- Clients: create live/sandbox clients, view/rotate secrets, set default scopes, allow anonymous commands.
+- Sites and devices: claim, link (vendor accounts), group, rename, archive, see capabilities and live status; simulator devices with behaviours.
+- Subjects and grants: browse and search; create test grants.
+- Commands: live timeline with state transitions and verification evidence.
+- Emergency panel (owner/admin): evacuate and lockdown buttons with a mandatory reason, live per-device outcomes, the egress review checklist, and a persistent banner while any emergency is active. (Phase 4.)
+- Events: viewer with filters, export.
+- Webhooks: endpoints, event types, delivery log, replay, test send.
+- Usage and billing: device-months and usage statements (Phase 3); payment method and invoices (Phase 4).
+- Feature flags: PostHog for rollout of new code paths (every flag has a name, an owner and a removal date; evaluated through a KV-cached lookup, never on the command hot path). Org entitlements (for example which org may enable an unofficial provider) live in `organisations.settings`, not in PostHog.
+
+### 13.2 Admin dashboard (Fluss staff)
+
+Roles: `ops_admin` (everything), `ops_support` (read everything, replay webhooks, read-only impersonation, no billing or entitlement changes), `ops_finance` (billing and reports only). Every action is written to `audit_log` with actor and reason; impersonation shows a banner and is read-only; phone numbers and emails are masked until revealed with a reason, which is also logged.
+
+Overview (the page that opens): orgs by status (trial, active, overdue, read-only, suspended); live controllers and devices by provider and by `controls.brand`; device-months so far this period and projected revenue; commands today and over 7 days with success rate and `unconfirmed` rate by provider; p95 time-to-`acked` by provider; webhook delivery success; provider health and circuit-breaker state; canary bench status; sites with an active emergency; open incidents; replication lag and queue backlogs.
+
+Customers: searchable list (region, plan, status, devices, device-months, last activity, billing state, entitlements) and a detail page per org: members, clients and their scopes, sites, controllers and devices with provider links and link health, grant counts by type, webhook endpoint health, usage history, invoices and payments, notes, and an audit timeline. Actions: read-only impersonation, set entitlements (unofficial providers, anonymous commands, `emergency:manage`), change plan or price, apply a credit or adjustment, suspend or reinstate (the 30-day rule in §15 is enforced here, not by goodwill), resend an invoice, revoke all tokens, export the org's data, add a note.
+
+Billing: period close status and the "close period" and "re-run metering" jobs (idempotent); invoices by status (draft, sent, paid, overdue); failed payments and dunning stage; revenue and device-months by month, by org, by region; reconciliation against Paystack and Stripe payouts; adjustments with reasons; churned orgs with last invoice.
+
+Reporting: devices under management over time by provider, kind and brand (this is where "how many Centurion gates do we control" is answered); commands and verification mix; access-event volume; partner adoption (orgs live on v1, per segment); the funnel from signup → first sandbox open → first live device → first paid invoice, with time-to-first-sandbox-open; retention and churn; CSV export for everything. Product analytics beyond this (feature usage, session funnels) stay in PostHog with a link out, not rebuilt here.
+
+Operations: provider health, circuit breakers and the per-provider kill switch; links in `needs_reauth`; DLQ view, replay and purge; active emergencies across all sites; vendor-contract-drift alerts; canary results; queue depths; region datastore status; feature flags (link to PostHog); break-glass usage.
+
+Support: one search box for any id, phone or email (org, site, controller, device, subject, command, event, webhook delivery); a command trace that shows the whole timeline from request to terminal state with every provider call and its latency; event and delivery lookups.
+
+Implementation: admin routes call internal endpoints under `/v1/admin/*` with `ops:*` scopes, Zod-validated like everything else, documented in a separate `openapi-admin.json` that is never published. Aggregates come from daily rollups (`metrics_daily`, built by Cron from `usage_daily`, `commands`, `events`, `webhook_deliveries`), never from scanning the events table on page load; live counters are limited to the current day. `GET /v1/admin/metrics` exposes the same rollups as JSON for the Fluss KPI Machine / Business Brain, so company reporting pulls from Fluss Ctrl rather than Fluss Ctrl pushing into it.
+
+Phasing: Phase 2 ships the `/v1/admin/*` endpoints a beta needs (org list and detail, entitlements, provider health and kill switch, link health, DLQ view and replay, command trace, read-only impersonation), driven from `fctl admin`, with no web UI: for one to three partners a CLI is enough and a month of UI work is not. Phase 3 adds the metering jobs (close period, re-run). Phase 4 adds the web UI (overview, customers, operations, support) and the metrics feed. Billing pages and reporting follow launch, with billing automation (§15).
+
+## 14. Security, privacy and compliance
+
+- Transport: TLS only; HSTS; Cloudflare WAF and bot rules in front; mTLS optional for connectors.
+- Secrets: Workers secrets for signing/encryption keys; vendor credentials envelope-encrypted; never in logs (redaction middleware).
+- Data minimisation: subjects need only `external_id`; phone/email optional.
+- Retention: `organisations.retention_days` (default 365). Nightly Cron pseudonymises events older than retention (`subject_id → null`, `data` stripped of personal fields, `pseudonymised_at` set); commands and deliveries beyond 90 days deleted. Webhook deliveries 90 days.
+- Data subject rights: `GET /subjects/{id}/export`, `DELETE /subjects/{id}` → erasure job: subject row anonymised, grants revoked, events pseudonymised, erasure event emitted. Platform remains controller; Fluss Ctrl is processor (DPA template, legal review before GA).
+- Provider-originated events: a vendor-app user who is not one of the platform's subjects (a household member using the Fluss+ app on the same gate) is recorded as `data.actor = { kind: "provider_user", ref }`, where `ref` is a keyed hash of the vendor's user id, stable per unit, so the platform can tell two people apart without learning who they are. Name and phone number are added only if the unit's owner chose to share them when the unit was claimed (`controllers.consent.share_actor_identity`, default off). Moving Fluss+ users' data from the SA company to Fluss Inc is a processing relationship of its own and needs an inter-company data agreement, separate from the platform DPA (legal review before beta).
+- Audit log for all console and ops actions.
+- Pen test in Phase 3, with a re-test of emergency modes before GA; dependency audit and secret scanning in CI.
+- Unofficial providers (§22): counsel's review of each vendor's terms before any provider code is built or run against the vendor's cloud; proof-of-control and recorded consent for every linked account; data minimisation (the owner's phone is the only vendor identity stored); a per-provider kill switch (`provider.disabled`, commands rejected with `provider_disabled`) usable within minutes; disclosure in docs, console and `GET /providers` that the integration is unofficial and excluded from the SLA.
+- Not legal advice: POPIA/GDPR say "no longer than necessary"; the defaults above are a starting point for legal review.
+
+## 15. Metering and billing
+
+- Unit: device-month, prorated daily (`usage_daily`), live devices only; sandbox free. A device is one channel, so a three-output Fluss+ unit is three devices: whether billing counts controllers or active devices is an open decision (PLAN §3), and until it is made metering records both.
+- Commands and events uncapped in v1 (watch for abuse via rate limits).
+- Phasing: Phase 3 ships metering and a monthly usage statement per org; the first partners are invoiced by hand from it. Phase 4 adds self-serve payment (payment method on file, automatic monthly charge) through the billing-provider adapter the merchant-of-record decision selects (PLAN §3). The rest of this section (automated invoicing for every org, dunning, reconciliation, the admin billing pages) follows launch.
+- Monthly Cron closes the period, creates an invoice through the billing provider adapter (`paystack` or `stripe`, per the merchant-of-record decision), emails it, and gates nothing on payment for the first 14 days (then read-only mode with a console banner; never stop commands for an estate without a 30-day notice). Period close, dunning and adjustments are visible and operable in the admin dashboard (§13.2); org status transitions (`active → overdue → read_only → suspended`) are driven by invoice state and logged.
+
+## 16. Repository layout
+
+```
+/apps/api                 Hono on Workers (routes, middleware, DO classes, queue consumers, crons)
+/apps/console             React + Vite SPA (Workers static assets)
+/apps/docs                Astro Starlight + Scalar reference
+/apps/www                 Astro marketing site (Phase 4)
+/apps/cli                 `fctl` CLI, published as `@flussctrl/cli` (login, devices, commands, `fctl listen` webhook relay, `fctl admin` for staff)
+/apps/mcp                 MCP server (post-launch, April 2027), thin layer over the public API
+/packages/core            domain logic: schemas (Zod), grant evaluation, command state machine, errors, http client
+/packages/db              Drizzle schema, migrations, repositories (org-scoped)
+/packages/providers/*     simulator, fluss-plus, gemini, nice, …
+/packages/conformance     provider conformance suite
+/packages/sdk-ts          generated client (openapi-typescript + thin wrapper)
+/packages/sdk-python      generated client (post-launch, on request)
+/packages/webhooks        Standard Webhooks sign/verify helpers (published)
+/infra/wrangler           wrangler configs per env
+/infra/terraform          Cloudflare DNS and zones, Route 53 secondary zone, Neon projects; applied only from CI
+/infra/openstatus         status page and synthetic checks
+/docs/adr                 architecture decision records, MADR template (one per decision in PLAN §3)
+/docs/runbooks            incident, provider outage, DLQ drain, key rotation + escrow, region add,
+                          db failover/failback, break-glass deploy, DNS switch
+/docs/postmortem-template.md
+/docs/security/threat-model.md
+README.md  CONTRIBUTING.md  TESTING.md  CLAUDE.md  PLAN.md  SPEC.md
+.github/  pull_request_template.md, CODEOWNERS, workflows (ci, security, dependency-review,
+          release-please, claude-review, deploy)
+.devcontainer/  lefthook.yml  commitlint.config.js  renovate.json  eslint.config.js (neostandard)
+.git-blame-ignore-revs  release-please-config.json
+```
+
+Tooling: TypeScript `strict`; neostandard + ESLint Stylistic (no Prettier); Lefthook runs lint, gitleaks and commitlint before commit; Conventional Commits referencing the GitHub issue (`feat(api): add grants (#123)`); release-please in manifest mode versions the apps and the published packages (`sdk-ts`, `webhooks`, `cli`) and writes the changelog; Renovate weekly. Branch names: `feat/`, `fix/`, `chore/` + issue number + slug (`feat/123-grants`); PR bodies close the issue (`Closes #123`).
+
+Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure.
+
+## 17. API lifecycle
+
+- Behavioural changes within `/v1` will use a dated `api_version` header when the first one is needed; not implemented until then.
+- Deprecations announced in the changelog, `Deprecation` and `Sunset` headers, 12-month minimum.
+- Changelog published at `docs.flussctrl.com/changelog` from the release-please changelog.
+
+## 18. Open questions (answer before Phase 1 ends)
+
+Decisions that need the founder (people, dates, money, legal) are tracked in PLAN §3. This list is the technical questions.
+
+1. Exact Fluss+ semantics for Tenant Access (max duration set by owner? per-grant or per-tenant?) to finish §6.
+2. Does the existing backend expose or can it add push events for app-originated access (§12.3 item 4)?
+3. Hosting region of the existing backend (latency budget).
+4. First beta partner and date.
+5. Do any partners need a C# SDK at launch?
+6. Status/sensor availability per Fluss+ hardware revision (which units can reach `confirmed`).
+7. Which agent actions need an explicit human confirmation beyond what MCP clients already prompt for (§19).
+8. Do any launch partners need the same gate reachable from two platforms (would pull device sharing, §20 item 1, forward)?
+9. Which Fluss+ units can be kept "open" or "closed" for an emergency hold, and which only pulse (affects the per-device outcome in both modes).
+10. Egress policy per market: SA estates typically lock down with no exit (the perimeter is outdoors); US buildings must keep free egress (fire code). Both are expressible with the `egress` flag; confirm the defaults with the first control-room customer and with legal before GA.
+11. Motor operating mode: how `controls.pulse_mode` and `autoclose_s` get recorded for existing Fluss+ installs (an installer step in the Fluss+ app, a field the backend already holds, or inference from behaviour: a `close` pulse that never produces `closed`), and what the equivalents of Centurion's modes are on Gemini, Nice, ET and DACE motors.
+12. Coordinator granularity: should serialisation and the minimum interval apply per controller rather than per device on multi-channel units (a Fluss+ with three outputs, a G-Ultra, a cellswitch), where the link to the unit is shared? Decide before Phase 1 fixes the Durable Object naming, because an object's identity cannot be renamed afterwards.
+13. What schedules `pollEvents` and background status polls, and what makes credential refresh single-flight (two concurrent refreshes of a rotating refresh token invalidate a link)? Proposal: a `LinkCoordinator` Durable Object per provider link that owns the poll alarm, the vendor-account rate limit and the refresh.
+14. `count_limited` and already-open gates: §7.1 does not consume a use when the gate was already open. Confirm with the first platform that issues visitor passes.
+15. Egress review invalidation (§4) blocks a lockdown until the review is redone. The alternative is to let the lockdown run and treat devices changed since the review as egress (never held, flagged in the outcome). Confirm with the first control-room customer.
+
+## 19. MCP server (post-launch, April 2027)
+
+- Endpoint `https://mcp.flussctrl.com/mcp`, Streamable HTTP transport, built on the same Workers stack (Cloudflare Agents SDK `McpAgent` + `@cloudflare/workers-oauth-provider`), calling the public API with the user's delegated token. No private endpoints.
+- Auth: OAuth 2.1 as in §3.1 (authorization code + PKCE, dynamic client registration, RFC 8414 and RFC 9728 metadata). Loopback redirect URIs with any port are accepted so command-line clients can connect. Origin header validated.
+- Tools, each with a `title` and `readOnlyHint` or `destructiveHint` annotation:
+  - read: `list_sites`, `list_devices`, `get_device_status`, `list_grants`, `search_events`, `get_command`
+  - write: `open_device`, `trigger_device`, `close_device`, `create_grant`, `revoke_grant`, `start_emergency` (mode evacuate or lockdown), `end_emergency` (`destructiveHint: true` on every physical action, on revoke and on both emergency tools)
+- Resources: `device://{id}/status`, `site://{id}/events/today`. Prompts: `daily_security_summary`, `investigate_access` (who, when, where).
+- Safety: write tools require scope `commands:write`/`grants:write` on the delegated token; every command issued by an agent carries `actor: { type: "agent", client, user }` in the audit log and `data`; agent tokens get a lower per-device command rate; `start_emergency` and `end_emergency` require `emergency:manage` on the delegated token and a `confirm` argument echoing the site name and mode.
+- Reviewer test account: a sandbox org with simulator devices, which doubles as the directory review account.
+- Directory listing needs: docs URL, privacy policy URL, support contact, icon, a plugin bundle with a skill describing estate-security workflows, and the seven policy acknowledgements in the portal.
+
+## 20. Post-launch candidates (v1.1; designed for, not built in v1)
+
+Nothing in this section is built without an explicit instruction.
+
+1. **Device sharing between orgs** (`device_shares`, see §2): the owner org grants a consumer org scoped rights on a device or group. Unlocks the delivery and visitor-management use cases across platforms.
+2. **Pass links**: `POST /grants` with `pass: { enabled: true, brand?: … }` returns `pass_url` and a QR payload; a hosted page (`pass.flussctrl.com`) lets the holder trigger the granted device within the grant's window; events carry `method: "pass"`.
+3. **Tamper-evident log**: each event stores `prev_hash` and `hash` (SHA-256 over canonical JSON); a daily anchor record is published on the status page and signed; `POST /events/export` can include proofs. Can start chaining from any date, so nothing is lost by deferring.
+4. **Tenant access** as specified in §6.
+5. **Connector architecture** (Gallagher, Impro, Paxton; `lock`/`unlock`, which also makes lockdown fully effective on doors; offline-tolerant grant cache). Own spec.
+6. **Python and C# SDKs** generated from OpenAPI.
+7. **`za` datastore** in AWS Cape Town, if beta latency or a customer requires it (§9).
+8. **Postgres-backed platform adapters and break-glass container** (§21.3).
+9. **Billing automation**: invoicing for every org, dunning, reconciliation, admin billing pages and reporting (§13.2, §15).
+
+## 21. Resilience, disaster recovery and degraded modes
+
+### 21.1 Targets
+- API availability 99.95% measured externally (≈ 22 minutes/month). Not credible without a database failover plan, hence this section.
+- Database: RPO ≤ 30 s, RTO ≤ 15 min (human-triggered) from Tier 1 onward.
+- Blast radius during a Fluss Ctrl outage: API-originated commands and webhooks only. Residents' apps, remotes and vendor systems keep working because this system never sits in the device path.
+
+### 21.2 Database tiers
+| Tier | When | What | Cost |
+|------|------|------|------|
+| 0 | Phase 0 | Neon PITR (30 days) + nightly encrypted logical dump (`pg_dump`, age-encrypted) to object storage in a **different trust domain** (Backblaze B2 or S3, not R2) + monthly restore drill | ~free |
+| 1 | Phase 3 (beta) | Warm standby in another region **and** provider via logical replication (`publish_via_partition_root` for partitioned tables): plain Postgres on a Hetzner US box, or RDS. Replication-lag alert (> 60 s pages). Failover runbook: promote standby → repoint Hyperdrive binding → verify smoke → announce. Failback via reverse replication. Quarterly drill in staging, annual in production | ~$20–40/mo |
+| 2 | US launch | Automated failover: Aurora Global Database (or Patroni on the self-hosted path). Promotion of the Tier 1 standby is the migration | per usage |
+
+Rules: a same-provider replica never counts as DR. Schema migrations are applied to the standby in the same deploy (migration runbook). Backups are tested, not assumed. The job that creates monthly partitions runs against the standby too: a partitioned table replicated through its root needs the target partition to exist on the subscriber, or replication stops.
+
+### 21.3 Compute and edge (Cloudflare) outage
+- Single compute provider at launch, accepted deliberately; the broker architecture keeps the blast radius to API commands.
+- Portability layer: `Queue`, `Coordinator` (per-device serialisation + alarms), `Cache` and `RateLimiter` are interfaces in `packages/core` from Phase 0, and production uses the Cloudflare bindings. The Postgres-backed implementation (advisory locks, `FOR UPDATE SKIP LOCKED`, a jobs table) and the Node container that runs on it are **post-launch** work: keeping two implementations of the per-device coordinator green on every PR while the command path is still changing is the wrong cost during the build. Until they exist a Cloudflare outage is an API outage, and the Reliability page says so.
+- Break-glass deployment (post-launch, with the adapters): container image built per release to GitHub's registry; `fly.toml`/compose and a one-page runbook in `docs/runbooks/break-glass.md`; exercised once a year against staging.
+- DNS: registrar outside Cloudflare; a secondary DNS zone (Route 53) pre-provisioned with the break-glass records; nameserver switch runbook with TTL guidance.
+- Status page (OpenStatus) and the static incident page live outside Cloudflare.
+
+### 21.4 Keys, accounts and escrow
+- JWT signing keys, envelope-encryption master keys and the provider-credential key are exported age-encrypted to an offline store with two key holders; rotation updates the escrow in the same runbook. Without this, a break-glass deployment cannot decrypt a single vendor credential.
+- Break-glass admin accounts on Cloudflare, Neon, GitHub, the registrar and the DNS secondary: hardware keys, stored offline, used only in incidents, every use audit-logged.
+
+### 21.5 Degraded modes (the contract partners build against)
+- Database unreachable: reads return cached device status with `stale: true` where available; commands and grant writes return `503 service_unavailable` with `Retry-After`; nothing is silently queued for later execution, because a gate opening ten minutes after someone asked is worse than a clear failure.
+- Provider unreachable: per-provider circuit breaker (opens after 5 consecutive failures, half-open probe every 30 s); commands to that provider are `rejected` with `code: provider_unavailable` instead of waiting out timeouts; the provider shows as a degraded component on the status page.
+- Queues backlog: webhooks are delayed, never lost (Queues persist, and deliveries are written to the outbox in the event's own transaction, §8.2; the retry schedule still applies); the console shows the backlog.
+- After recovery: provider polling resumes from stored cursors, so provider-originated events during the outage are backfilled; `occurred_at` stays true to the device, `recorded_at` shows the gap.
+- Documented in the public docs under "Reliability", including the recommendation that platforms show residents a fallback ("use your Fluss+ app") when they receive a `503`.
+
+### 21.6 Incident management
+- Severities: SEV1 (commands failing for many orgs or any safety-relevant misbehaviour), SEV2 (one provider or one region degraded), SEV3 (webhooks delayed, console down). SEV1 pages immediately; SEV2 pages in working hours. Pages come from Sentry uptime monitors and metric alerts and go to a channel that wakes a person, not only Slack. PostHog insight alerts are evaluated hourly on the standard plan and are for trends, never the only signal for a page. Each alert links to its runbook.
+- On-call: weekly rota with a named backup once the team joins; until then the founder plus the escalation contact in the runbook.
+- Postmortems use the blameless template in `docs/`; actions become issues from the postmortem-action template.
+- Comms: status page update within 15 minutes of a SEV1, hourly thereafter; post-incident review within 5 working days, published for SEV1.
+- Legal: cyber-liability and professional-indemnity cover, and liability caps and an SLA schedule in the terms, before GA; lockdown makes this non-optional.
+
+## 22. Unofficial cloud providers: Accentronix and Centurion (MyCentsys Remote)
+
+Source: `openapi-3.json` (reverse-engineered from the two mobile apps). Keep it in `packages/providers/{accentronix,centurion}/vendor/openapi.json`. Both are `account_link` providers with `stability: "unofficial"`: no contract, no sandbox, no notice of change. Everything below is therefore behind a per-org feature flag, disclosed as unofficial, excluded from the SLA, and tested against real hardware (§11 item 18). Nothing in this section is built or run against either vendor's cloud, the canary bench included, until counsel has reviewed (§22.3). This section, the vendor OpenAPI files and the two provider packages are restricted to named collaborators: do not copy them into shared documents, issues or decks.
+
+### 22.1 How they fit the model
+
+| Concept | Accentronix (cellswitch) | Centurion G-Ultra via MyCentsys Remote / gweb |
+|---|---|---|
+| Link identity | owner's MSISDN | owner's E.164 number |
+| Vendor login proves control? | **No** — the vendor's login does not prove the caller controls the number (mechanism in the vendor OpenAPI file). Fluss Ctrl OTP (Twilio) required first; `consent.method = "fc_otp"` | Yes — vendor OTP to the owner's phone (`SendOtp`/`ValidateOtp`); `consent.method = "vendor_otp"` |
+| Credentials to keep | access + refresh JWT; `refreshCredentials` on 401 | MyCentsys JWT (30-year), gweb blob, per-link **access key** (derived via `MCROTPNumb` with a stable synthetic device string, stored in `client_identity_enc`); re-derive on rejection |
+| Controller | one per `cellswitchid` (`isOnline`, `updatetime`) | one per `DeviceId` (IMEI, firmware, signal, voltage, `DeviceOnline`, `DeviceAdmin`) |
+| Devices (channels) | one per `DeviceButtons` entry: `channel = "button:<buttonNo>"`, label from `buttonLabel`, command from `deviceCommand` (default `Pulse`); role by label heuristics, platform can override | one per **output** IO with `OnStateName = "Pulse"`: `channel = "io:<IONumber>"`, role from `IOName` (`Open` → main, `Pedestrian` → pedestrian, else other). Toggle outputs are **not** devices: `Keep Open` → `hold: ["open"]`, `Lock` → `hold: ["closed"]` on the controller's devices |
+| Status | `DeviceState` option (`In1/In2/Op1…`) polled via `GetClientDevices`; `status` only when the platform maps an input as gate status (`capabilities_override.status_input`), else `none` | `MCRStatus` (cached: `Gate Status:Closed`, lock state, signal) and `AppIOStatesEN` (live IO state ids, no access key needed; the app polls every ~3 s). `status` where a gate-status input exists, else `none` |
+| Command | `SendClientMessage` body `<msisdn>*<command>`; `status: true` = cloud accepted → `sent`, never `acked` by itself | `MCRActEn(deviceId, accessKey, ioNumber)`; "Activation Queued Successfully" = cloud accepted → `sent`, never `acked` by itself |
+| Verification | `none` unless a status input is mapped (then `status` with a 15 s `open`/`trigger` confirm window: SMS-style delivery is slow) | `status` on units with a gate-status input (poll `AppIOStatesEN` every 2 s during the confirm window), else `none` |
+| Native holds | none known | `setHold("open")` = Keep Open toggle on; `setHold("closed")` = Lock toggle on; `null` clears. Verified via `MCRStatus` lock/keep-open state |
+| Grant sync | none | optional v1.1: `AccessSharing/AddOrUpdateAccess` maps `time_window` (`StartTimeUtc/EndTimeUtc`) and `count_limited` (`MaximumTriggerCount`) to a share for the subject's phone; recipient must accept in their app, so it is `provider_sync.state = "pending"` until then |
+| Rate limits | unknown; `min_command_interval_s` 5, status poll ≥ 60 s per controller outside confirm windows | unknown; `min_command_interval_s` 3, `AppIOStatesEN` ≤ every 2 s only inside confirm windows, `MCRStatus` ≤ every 60 s |
+| Known quirks | `.NET /Date()/` timestamps; failures as HTTP 200 `status: false`; `DeviceState` is pseudo-JSON | `|`-joined base64 parameters; double-encoded JSON responses; a non-object `MCRStatus` means the key was rejected (re-derive, then `needs_reauth`); IO order from `MCRConfEnV3` must be cached per controller |
+
+### 22.2 Behaviour rules
+- Use only the calls needed to link, discover, read status, command and hold. Do not emulate the app's analytics, rating or notification bookkeeping, and do not spoof telemetry.
+- Treat every vendor response as untrusted input: schema-validate, redact phone numbers in logs, raise `vendor_contract_drift` on unknown shapes.
+- Link failure modes map to `needs_reauth` (`provider_link.needs_reauth` webhook, console prompt to the platform) rather than silent retries.
+- These providers never block the roadmap: the Fluss+ retrofit remains the official route onto Centurion motors, and the docs say so.
+
+### 22.3 Strategy and conditions for shipping
+- Order of work: (1) counsel reviews each vendor's terms and the reverse-engineering position **before any provider code is built or pointed at a vendor's cloud**, the canary bench included (briefed November 2026, PLAN §3); (2) build in Phase 2 (the mapping is already done; a few days each) and run on the hardware canary through Phase 3; (3) ship at launch as **beta / unofficial** behind a per-org flag with written disclosure to each platform.
+- Decision: both vendors are **informed before go-live**. Sequence: (a) responsible disclosure of the weaknesses found while mapping the two APIs, sent as soon as counsel has reviewed (target December 2026), so that a 90-day fix window closes before launch and before anything is said publicly. The weaknesses are described in the disclosure file kept with counsel's correspondence, outside this repository, and are not restated here until the vendors have fixed them; (b) a written notice in the first week of February describing what Fluss Ctrl does with their cloud APIs, on whose behalf (consenting account owners with recorded proof of control), the safeguards (minimal calls, rate limits mirroring the app, kill switch) and an invitation to make the integration official. An objection parks the provider behind its flag; it does not move the launch.
+- Expect disclosure to change what we integrate with. A vendor that fixes a login weakness changes the link flow this provider uses (most likely Accentronix). That is the right outcome and the provider is built for it: the link flow sits behind `beginLink`/`completeLink`, contract drift is detected (§11 item 19), and if the new flow cannot be completed with the account owner's consent the provider stays parked.
+- Go-live gate for each unofficial provider: vendor informed, no objection outstanding, hardware canary green for 14 consecutive days, disclosure text signed by each platform that enables it.
+- Use adoption numbers to open official API or partnership talks with both vendors by Q2 2027. If a vendor objects, the kill switch disables the provider within 24 hours and affected platforms are told in the same message that Fluss+ retrofit is available.
+
+## 23. Providers still to be specified (blocking their build)
+
+Three launch-set providers have no specification here. Nothing is built for them until this section holds a mapping at the level of §12 (Fluss+) or §22.1 (the unofficial clouds).
+
+- **Gemini, Nice** (Phase 2, `account_link`). PLAN §6 calls them "OEM cloud, already integrated". Needed: whether each is a separate provider talking to the OEM's cloud or is reached through the existing Fluss backend (in which case it is the Fluss+ provider with `controls.brand` set, not a new provider); the vendor API reference or the existing integration's code; auth and linking model; controller and channel model; status, events and push; native holds; rate limits; the vendor's operating modes mapped to `controls.pulse_mode`.
+- **Wiegand / dry-contact bridge** (Phase 3, `claim_code`, Fluss+ hardware). Needed: what the bridge does electrically (a dry contact into a panel's request-to-exit or reader input, or a Wiegand credential presented to the panel); which actions and which verification level it can honestly report; whether a grant maps to a credential number on the panel or the panel sees one shared identity; firmware owner and dates. If no owner and dates exist by the end of Phase 1, it leaves the launch set (PLAN §6).
