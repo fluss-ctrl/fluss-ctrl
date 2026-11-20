@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Bash(pnpm test:unit *)",
+      "Bash(pnpm test *)",
+      "Bash(pnpm test:integration *)",
+      "Bash(pnpm lint *)",
+      "Bash(pnpm typecheck *)",
+      "Bash(pnpm openapi *)",
+      "Bash(pnpm db:generate *)"
+    ],
+    "ask": [
+      "Bash(pnpm add *)",
+      "Bash(pnpm dlx *)",
+      "Bash(npx *)",
+      "Edit(/.github/**)",
+      "Edit(/CODEOWNERS)",
+      "Edit(/lefthook.yml)",
+      "Edit(/commitlint.config.*)",
+      "Edit(/eslint.config.*)",
+      "Edit(/.squawk.toml)",
+      "Edit(/.dependency-cruiser.*)"
+    ],
+    "deny": [
+      "Bash(wrangler deploy *)",
+      "Bash(wrangler versions deploy *)",
+      "Bash(wrangler rollback *)",
+      "Bash(wrangler secret *)",
+      "Bash(wrangler delete *)",
+      "Bash(pnpm wrangler deploy *)",
+      "Bash(pnpm exec wrangler deploy *)",
+      "Bash(npx wrangler deploy *)",
+      "Bash(terraform apply *)",
+      "Bash(terraform destroy *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push * main)",
+      "Bash(git push *:main)",
+      "Bash(gh pr merge *)",
+      "Bash(gh release create *)",
+      "Bash(gh workflow run *)",
+      "Bash(gh secret *)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Read(!.env.example)",
+      "Read(.dev.vars)",
+      "Read(.dev.vars.*)",
+      "Read(!.dev.vars.example)",
+      "Read(**/*.pem)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Read(~/.config/gh/**)",
+      "Read(~/.wrangler/**)",
+      "Read(~/.config/.wrangler/**)",
+      "Read(~/Library/Preferences/.wrangler/**)",
+      "Read(/packages/providers/accentronix/**)",
+      "Read(/packages/providers/centurion/**)",
+      "WebFetch(domain:v1.fluss-api.com)",
+      "WebFetch(domain:api.flussctrl.com)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guard.mjs",
+            "timeout": 10,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}
