@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { MARKER, changedLineCoverage, formatRanges, parseDiff, parseLcov, renderMarkdown } from './coverage-changed-lines.mjs'
+import { MARKER, changedLineCoverage, formatRanges, parseDiff, parseLcov, renderMarkdown, unquoteGitPath } from './coverage-changed-lines.mjs'
 
 const lcov = `TN:
 SF:/repo/packages/core/src/a.ts
@@ -75,6 +75,22 @@ describe('parseDiff', () => {
       const text = ['--- a/f.ts', '+++ b/f.ts', ...hunks].join('\n')
       expect(parseDiff(text).get('f.ts')).toEqual(new Set(sorted))
     }))
+  })
+})
+
+describe('unquoteGitPath', () => {
+  it('decodes octal-escaped UTF-8 and C escapes, and leaves plain paths alone', () => {
+    expect(unquoteGitPath('"b/packages/core/src/caf\\303\\251.ts"')).toBe('b/packages/core/src/café.ts')
+    expect(unquoteGitPath('"b/a\\tb\\"c\\\\d.ts"')).toBe('b/a\tb"c\\d.ts')
+    expect(unquoteGitPath('b/plain.ts')).toBe('b/plain.ts')
+  })
+
+  it('joins a quoted non-ASCII diff path with its lcov entry', () => {
+    const quoted = ['--- "a/packages/core/src/caf\\303\\251.ts"', '+++ "b/packages/core/src/caf\\303\\251.ts"', '@@ -0,0 +1,2 @@', '+a', '+b'].join('\n')
+    const coverage = parseLcov('SF:packages/core/src/café.ts\nDA:1,1\nDA:2,0\nend_of_record\n', '/repo')
+    expect(changedLineCoverage(coverage, parseDiff(quoted)).files).toEqual([
+      { path: 'packages/core/src/café.ts', executable: 2, covered: 1, uncovered: [2] },
+    ])
   })
 })
 

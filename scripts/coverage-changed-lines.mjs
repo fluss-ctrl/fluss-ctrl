@@ -53,7 +53,7 @@ export function parseDiff (text) {
   let current = null
   for (const line of text.split(/\r?\n/)) {
     if (line.startsWith('+++ ')) {
-      const target = line.slice(4)
+      const target = unquoteGitPath(line.slice(4))
       if (target === '/dev/null') {
         current = null
       } else {
@@ -71,6 +71,38 @@ export function parseDiff (text) {
     }
   }
   return files
+}
+
+/**
+ * Decodes a path Git wrote in its C-style quoted form ("b/caf\303\251.ts"), which it uses for
+ * paths with special or non-ASCII bytes. Unquoted paths are returned unchanged.
+ * @param {string} path
+ * @returns {string}
+ */
+export function unquoteGitPath (path) {
+  if (!(path.length >= 2 && path.startsWith('"') && path.endsWith('"'))) return path
+  const escapes = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '\\': 92, '"': 34 }
+  const bytes = []
+  const body = path.slice(1, -1)
+  for (let i = 0; i < body.length; i++) {
+    const ch = body[i]
+    if (ch !== '\\') {
+      bytes.push(...Buffer.from(ch, 'utf8'))
+      continue
+    }
+    const next = body[i + 1]
+    if (/[0-7]/.test(next ?? '')) {
+      const octal = /^[0-7]{1,3}/.exec(body.slice(i + 1))[0]
+      bytes.push(parseInt(octal, 8))
+      i += octal.length
+    } else if (next in escapes) {
+      bytes.push(escapes[next])
+      i += 1
+    } else {
+      bytes.push(92)
+    }
+  }
+  return Buffer.from(bytes).toString('utf8')
 }
 
 /**
@@ -135,7 +167,7 @@ function main () {
   }
   const root = process.cwd()
   const coverage = parseLcov(readFileSync(values.lcov, 'utf8'), root)
-  const diff = parseDiff(execFileSync('git', ['diff', '--unified=0', '--no-color', '--no-ext-diff', `${values.base}...HEAD`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
+  const diff = parseDiff(execFileSync('git', ['-c', 'core.quotePath=false', 'diff', '--unified=0', '--no-color', '--no-ext-diff', `${values.base}...HEAD`], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }))
   process.stdout.write(renderMarkdown(changedLineCoverage(coverage, diff)))
 }
 

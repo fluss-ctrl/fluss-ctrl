@@ -1,5 +1,6 @@
-# GitHub dependency review (SPEC §11 item 10): fails a PR that adds a dependency with a known
-# high or critical vulnerability. Uses only the automatic GITHUB_TOKEN.
+# GitHub dependency review (SPEC §11 item 10): fails a PR that adds a dependency (runtime,
+# development or unknown scope) with a known high or critical vulnerability.
+# Uses only the automatic GITHUB_TOKEN.
 name: Dependency review
 
 on:
@@ -23,4 +24,6 @@ jobs:
       - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           fail-on-severity: high
+          # The action checks only runtime dependencies by default; dev tooling runs in CI too.
+          fail-on-scopes: runtime, development, unknown
           comment-summary-in-pr: on-failure
