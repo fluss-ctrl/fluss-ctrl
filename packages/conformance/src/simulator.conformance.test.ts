@@ -21,6 +21,7 @@ defineConformanceSuite({
       },
       timeout: { device: ref('dev_timeout', {}), params: { simulate: 'timeout' } },
       advance: (ms) => { clock.advance(ms) },
+      now: () => clock.now(),
       capabilitiesFor: (device) => provider.capabilitiesFor(device),
     }
   },
@@ -42,6 +43,7 @@ defineConformanceSuite({
       },
       timeout: { device: ref('dev_timeout', { pulse_mode: 'open_only' }), params: { simulate: 'timeout' } },
       advance: (ms) => { clock.advance(ms) },
+      now: () => clock.now(),
       capabilitiesFor: (device) => provider.capabilitiesFor(device),
     }
   },
@@ -62,6 +64,29 @@ defineConformanceSuite({
       },
       timeout: { device: ref('dev_timeout', { pulse_mode: 'open_only' }), params: { simulate: 'timeout' } },
       advance: (ms) => { clock.advance(ms) },
+      now: () => clock.now(),
+      capabilitiesFor: (device) => provider.capabilitiesFor(device),
+    }
+  },
+})
+
+// A fast gate opens and closes again inside one confirm window, so the kit must poll, not read once
+// at the deadline.
+defineConformanceSuite({
+  name: 'simulator (fast gate, opens and autocloses inside the window)',
+  setup: () => {
+    const clock = manualClock()
+    const provider = createSimulator({ clock, random: () => 1 })
+    return {
+      provider,
+      devices: {
+        closed: ref('dev_closed', { travel_s: 1, autoclose_s: 1 }),
+        open: ref('dev_open', { travel_s: 1, initial_state: 'open', autoclose_s: null }),
+        offline: ref('dev_offline', { online: false }),
+      },
+      timeout: { device: ref('dev_timeout', {}), params: { simulate: 'timeout' } },
+      advance: (ms) => { clock.advance(ms) },
+      now: () => clock.now(),
       capabilitiesFor: (device) => provider.capabilitiesFor(device),
     }
   },

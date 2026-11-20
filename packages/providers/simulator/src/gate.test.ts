@@ -89,6 +89,16 @@ describe('gate model, examples', () => {
     expect(advance(open, shorter, 0).position).toBe(6_000)
   })
 
+  it('switching autoclose off cancels a pending autoclose, but not a close already under way', () => {
+    const open = initialGate(toggle, 0, 'open')
+    expect(open.autoclose_at).toBe(15_000)
+    const noAutoclose: GateParams = { ...toggle, autoclose_ms: null }
+    expect(advance(open, noAutoclose, 100_000)).toMatchObject({ phase: 'idle', position: 12_000, autoclose_at: null })
+    const closing = advance(open, toggle, 20_000)
+    expect(closing.phase).toBe('closing')
+    expect(reportedState(advance(closing, noAutoclose, 27_000))).toBe('closed')
+  })
+
   it('never evaluates before the state it was given', () => {
     const s = pulse(initialGate(toggle, 0, 'closed'), toggle, 5_000)
     expect(advance(s, toggle, 1_000)).toEqual(s)

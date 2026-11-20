@@ -11,6 +11,7 @@ import {
   type CommandAction,
   type CommandRequest,
   type DeviceRef,
+  type DeviceState,
   type Provider,
   type ProviderCapabilities,
 } from '@flussctrl/core'
@@ -32,6 +33,8 @@ export interface ConformanceContext {
   readonly timeout: { readonly device: DeviceRef, readonly params?: Readonly<Record<string, unknown>> }
   /** Moves time forward by `ms`: a manual clock on fixtures, a real wait on a bench. */
   advance(ms: number): void | Promise<void>
+  /** The current time in ms, on the same clock `advance` moves (status reads may move it too). */
+  now(): number
   /** The device's capabilities, where they differ from the descriptor's defaults. */
   capabilitiesFor?(device: DeviceRef): ProviderCapabilities
 }
@@ -63,6 +66,20 @@ export function defineConformanceSuite (target: ConformanceTarget): void {
   describe(`provider conformance: ${target.name}`, () => {
     let ctx: ConformanceContext
     const caps = (device: DeviceRef): ProviderCapabilities => ctx.capabilitiesFor?.(device) ?? ctx.provider.describe().capabilities
+
+    // Polls status through the action's confirm window, as the coordinator does (SPEC §7.1), and
+    // returns the expected state as soon as it is seen, or the last state read at the deadline. A
+    // fast gate may reach the state and leave it again before the window ends.
+    async function observeWithinWindow (device: DeviceRef, action: CommandAction, expected: DeviceState): Promise<DeviceState> {
+      const pollMs = Math.max(1, caps(device).poll_status_interval_s * 1000)
+      const deadline = ctx.now() + ctx.provider.describe().timeouts.confirm_window_s[action] * 1000
+      let state = (await ctx.provider.getStatus(device)).state
+      while (state !== expected && ctx.now() < deadline) {
+        await ctx.advance(Math.min(pollMs, deadline - ctx.now()))
+        state = (await ctx.provider.getStatus(device)).state
+      }
+      return state
+    }
 
     beforeEach(async () => {
       ctx = await target.setup()
@@ -125,8 +142,7 @@ export function defineConformanceSuite (target: ConformanceTarget): void {
           expect(result.error).toBeUndefined()
           expect(result.acked).toBe(deviceCaps.ack)
           if (!deviceCaps.status) return
-          await ctx.advance(ctx.provider.describe().timeouts.confirm_window_s[action] * 1000)
-          expect((await ctx.provider.getStatus(device)).state).toBe(c.expect)
+          expect(await observeWithinWindow(device, action, c.expect)).toBe(c.expect)
         })
       }
     })
@@ -147,8 +163,7 @@ export function defineConformanceSuite (target: ConformanceTarget): void {
         const device = ctx.devices.closed
         const action: CommandAction = caps(device).actions.includes('open') ? 'open' : 'trigger'
         await ctx.provider.sendCommand(device, command(action))
-        await ctx.advance(ctx.provider.describe().timeouts.confirm_window_s[action] * 1000)
-        expect((await ctx.provider.getStatus(device)).state).toBe('open')
+        expect(await observeWithinWindow(device, action, 'open')).toBe('open')
       })
     })
 

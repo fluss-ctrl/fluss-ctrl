@@ -32,6 +32,31 @@ describe('manualClock', () => {
     await clock.sleep(-5)
     expect(clock.now()).toBe(500)
   })
+
+  it('resumes chained sleeps in deadline order, each starting from when its caller resumed', async () => {
+    const clock = manualClock(0)
+    const order: string[] = []
+    const a = (async () => {
+      await clock.sleep(100)
+      order.push(`a1@${clock.now()}`)
+      await clock.sleep(100)
+      order.push(`a2@${clock.now()}`)
+    })()
+    const b = (async () => {
+      await clock.sleep(1_000)
+      order.push(`b@${clock.now()}`)
+    })()
+    await Promise.all([a, b])
+    expect(order).toEqual(['a1@100', 'a2@200', 'b@1000'])
+    expect(clock.now()).toBe(1_000)
+  })
+
+  it('resumes sleeps with the same deadline in the order they started', async () => {
+    const clock = manualClock(0)
+    const order: number[] = []
+    await Promise.all([1, 2, 3].map(async (n) => { await clock.sleep(50); order.push(n) }))
+    expect(order).toEqual([1, 2, 3])
+  })
 })
 
 describe('systemClock', () => {

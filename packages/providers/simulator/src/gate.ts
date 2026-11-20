@@ -87,9 +87,12 @@ function opposite (d: Direction): Direction {
   return d === 'opening' ? 'closing' : 'opening'
 }
 
-// A device's behaviour can change between calls (PATCH /devices/{id}); keep the position valid.
+// A device's behaviour can change between calls (PATCH /devices/{id}); keep the state valid.
+// Switching autoclose off cancels a pending autoclose; a close already under way carries on.
 function clampToParams (s: GateState, params: GateParams): GateState {
   if (!(params.travel_ms >= 1)) throw new RangeError('travel_ms must be at least 1')
-  if (s.position <= params.travel_ms) return s
-  return { ...s, position: params.travel_ms }
+  let next = s
+  if (params.autoclose_ms === null && next.autoclose_at !== null) next = { ...next, autoclose_at: null }
+  if (next.position > params.travel_ms) next = { ...next, position: params.travel_ms }
+  return next
 }
