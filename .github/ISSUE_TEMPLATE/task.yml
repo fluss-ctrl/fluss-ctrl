@@ -1,0 +1,76 @@
+name: Task
+description: A unit of work for one pull request (feature, fix or chore).
+title: "<type>: <short description>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One task, one branch (`feat|fix|chore/<issue>-slug`), one PR. Check that the work belongs to the
+        current phase (CLAUDE.md status line, SPEC §0) before filing.
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why this is needed, and the SPEC / PLAN sections it implements.
+      placeholder: SPEC §6 (grants); PLAN §7 Phase 1.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: One Given / When / Then per behaviour. These are what the PR is checked against.
+      value: |
+        - **Given** …, **when** …, **then** …
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: What this task deliberately does not do, and where that work lives (issue numbers).
+    validations:
+      required: true
+  - type: textarea
+    id: open-questions
+    attributes:
+      label: Open questions
+      description: Anything the spec does not settle. Write "None" if there are none.
+    validations:
+      required: true
+  - type: textarea
+    id: depends-on
+    attributes:
+      label: Depends on
+      description: Issues or PRs that must merge first. Write "Nothing" if none.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      description: High for auth, tenancy or RLS, billing, the command and emergency path, grants, migrations and unofficial providers (CODEOWNERS paths).
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Definition of done
+      description: Tick these on the issue as the work lands. Keep the list; strike through items that do not apply and say why.
+      value: |
+        - [ ] Acceptance criteria met
+        - [ ] Work belongs to the current phase
+        - [ ] Tests green at the right layers
+        - [ ] OpenAPI regenerated and committed
+        - [ ] Docs updated
+        - [ ] Conventional Commit with the issue number
+        - [ ] Preview smoke green
+        - [ ] No new secrets in code
+        - [ ] Risk level stated in the PR
+        - [ ] ADR if the decision was structural
+    validations:
+      required: true

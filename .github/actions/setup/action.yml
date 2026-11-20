@@ -1,0 +1,27 @@
+# Shared job setup: pnpm (version from package.json `packageManager`), Node (from .nvmrc) with the
+# pnpm store cached, a frozen-lockfile install, and the Turborepo local cache.
+name: Setup
+description: Install pnpm, Node and dependencies, and restore the Turborepo cache.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Install (frozen lockfile)
+      shell: bash
+      run: pnpm install --frozen-lockfile
+
+    # Turborepo's local cache lives in .turbo/cache. Keyed per job so lint, typecheck and
+    # integration do not overwrite each other; the newest entry for the job is restored.
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: .turbo/cache
+        key: turbo-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ runner.os }}-${{ github.job }}-

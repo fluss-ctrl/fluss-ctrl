@@ -6,24 +6,40 @@ fast-check property tests; time-dependent code uses the injected clock; no `.ski
 
 | # | Layer | Tool | Command | Status |
 |---|-------|------|---------|--------|
-| 1 | Unit | Vitest | `pnpm test:unit` | ✅ runs every workspace's `src/**/*.test.ts` with coverage |
+| 1 | Unit | Vitest | `pnpm test:unit` | ✅ runs every workspace's `src/**/*.test.ts` (and `scripts/*.test.mjs`) with coverage; CI `unit` job |
 | 1a | Property-based | fast-check in Vitest | `pnpm test:unit` | arrives with the first parser or grant logic |
-| 2 | Contract (routes vs committed `openapi.json`) | Vitest, oasdiff, Spectral | `pnpm test:unit`; oasdiff and Spectral in CI | needs OpenAPI generation (#7) and CI (#3) |
+| 2 | Contract (routes vs committed `openapi.json`) | Vitest, oasdiff, Spectral | `pnpm test:unit`; oasdiff and Spectral in CI | needs OpenAPI generation (#7); oasdiff and Spectral jobs arrive with #7 |
 | 3 | Provider conformance (simulator) | Vitest (`packages/conformance`) | `pnpm test:unit` | skeleton in #8 |
-| 4 | Integration (real Postgres) | Vitest + Testcontainers, `@cloudflare/vitest-pool-workers` | `pnpm test:integration` (Docker) | runs, but no suites until #5 |
+| 4 | Integration (real Postgres) | Vitest + Testcontainers, `@cloudflare/vitest-pool-workers` | `pnpm test:integration` (Docker) | ✅ runs in CI (`integration` job); no suites until #5 |
 | 5 | E2E against the PR preview | Playwright | `pnpm test:e2e` (`$PREVIEW_URL`) | not yet implemented (#9) |
 | 6 | Smoke (end of every deploy) | the Playwright suite | run by the deploy workflow | #9, #10 |
 | 7 | Synthetic monitoring | OpenStatus, scheduled GitHub Action | none locally | later phase |
 | 8 | Load | k6 | before each phase gate | later phase |
 | 9 | Chaos | scripted scenarios | none locally | later phase |
-| 10 | Security | Semgrep CE, gitleaks, dependency review, ZAP | gitleaks runs in the pre-commit hook; the rest in CI | CI in #3 |
+| 10 | Security | Semgrep CE, gitleaks, dependency review, ZAP | gitleaks runs in the pre-commit hook; the rest in CI | ✅ Semgrep CE + gitleaks (`security.yml`), dependency review (`dependency-review.yml`); ZAP needs the preview (#9) |
 | 11 | Regression | any layer above | — | every bug fix |
-| 12 | Migrations | squawk, previous release's suite | CI | #5, #3 |
+| 12 | Migrations | squawk, previous release's suite | CI | ✅ `squawk` job lints changed `packages/db/**.sql` (no-op until #5); previous-release suite later |
 | 13 | Docs as tests | quickstart snippets | `pnpm test:docs` (`$PREVIEW_URL`) | not yet implemented (#9) |
 | 15 | Architecture | dependency-cruiser | `pnpm lint` (runs `pnpm lint:deps`) | ✅ routes → core → db; providers never import db |
 
 Items 14 (restore drill), 16 (portability), 17 (DR drills), 18 (hardware canary) and 19 (vendor
 contract drift) are scheduled jobs or later-phase work and have no local command.
+
+## CI
+
+Workflows live in `.github/workflows/` and use no secret other than the automatic `GITHUB_TOKEN`.
+
+| Workflow | Runs on | Jobs |
+|---|---|---|
+| `ci.yml` | PRs, pushes to `main` | `lint` (ESLint + dependency-cruiser), `typecheck`, `unit` (`pnpm test:unit`, coverage floor, changed-lines comment), `integration` (`pnpm test:integration`, Docker on the runner), `squawk` (changed migrations), and `ci`, which passes only if all of them did |
+| `security.yml` | PRs, pushes to `main` | `semgrep` (Semgrep CE, fails on ERROR severity), `gitleaks` (full history, any finding fails) |
+| `dependency-review.yml` | PRs | GitHub dependency review, fails on high or critical |
+| `release-please.yml` | pushes to `main` | opens or updates the release PR (manifest mode; no publish step) |
+
+Every job installs with `pnpm install --frozen-lockfile` through `.github/actions/setup`, which also
+restores the pnpm store and the Turborepo cache (`.turbo/cache`). Actions are pinned by commit SHA
+with the version in a comment; Renovate keeps them current. The `ci` job is the one to require in
+the `main` ruleset, alongside `Semgrep CE`, `gitleaks` and `Dependency review`.
 
 ## Running a subset
 
@@ -39,6 +55,14 @@ pnpm --filter @flussctrl/api test -t "refuses"     # one test by name
 Coverage is reported for every workspace and treated as a guide, except for `packages/core`,
 which has a hard floor (90% lines, branches, functions and statements, set in `vitest.config.ts`).
 A missed branch there can open or lock a gate. The floor is never lowered to make a PR pass.
+
+On every PR, CI posts (and then updates) one comment with coverage on the lines the PR adds,
+computed by `scripts/coverage-changed-lines.mjs` from `coverage/lcov.info` and the diff against the
+base. It is a guide, not a gate. To see it locally:
+
+```sh
+pnpm test:unit && node scripts/coverage-changed-lines.mjs --lcov coverage/lcov.info --base origin/main
+```
 
 ## Writing tests
 
