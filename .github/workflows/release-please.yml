@@ -1,0 +1,32 @@
+# release-please in manifest mode (SPEC §16): on every push to main, opens or updates the release
+# PR from release-please-config.json and .release-please-manifest.json. Merging that PR tags the
+# components and creates GitHub releases. Nothing is published or deployed here yet (#10 and later).
+# Uses only the automatic GITHUB_TOKEN; the repository setting "Allow GitHub Actions to create and
+# approve pull requests" must be on for it to open the PR.
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: release-please
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # tags and releases
+      pull-requests: write # the release PR
+      issues: write # release labels
+    steps:
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
