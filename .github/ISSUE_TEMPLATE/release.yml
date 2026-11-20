@@ -1,0 +1,69 @@
+name: Release
+description: One per production deploy. The production Environment approval is the sign-off (SPEC §11).
+title: "release: <version>"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Open one release issue per production deploy. The deploy lands on the internal ring (Fluss's own
+        org) before gradual rollout; automated tests there actuate bench devices only, never a real gate.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Tag or versions from the release-please PR.
+      placeholder: api v0.4.0
+    validations:
+      required: true
+  - type: input
+    id: release-pr
+    attributes:
+      label: Release PR
+      description: Link to the release-please PR (it carries the changelog).
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: What changes for users
+      description: A short summary; the changelog has the detail.
+    validations:
+      required: true
+  - type: textarea
+    id: migrations
+    attributes:
+      label: Migrations
+      description: Migrations in this release, each expand/contract and squawk-clean, and whether the previous release's suite passed against the new schema (SPEC §11 items 4 and 12). Write "None" if none.
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback plan
+      description: How to roll back (normally a redeploy of the previous Worker version) and anything that makes it harder.
+    validations:
+      required: true
+  - type: textarea
+    id: checklist
+    attributes:
+      label: Release checklist
+      value: |
+        - [ ] CI green on the release commit
+        - [ ] Staging deploy and smoke suite green (link)
+        - [ ] Hardware canary green, if an unofficial provider changed (link)
+        - [ ] Production Environment approval given
+        - [ ] Internal ring deploy and smoke green (link)
+        - [ ] Gradual rollout complete with no automatic rollback
+        - [ ] Sentry release tagged; no new error spike after rollout
+    validations:
+      required: true
