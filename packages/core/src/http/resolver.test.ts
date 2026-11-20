@@ -22,8 +22,17 @@ describe('createDohResolver', () => {
       AAAA: { Status: 0, Answer: [{ type: 28, data: '2606:2800:220:1::1', TTL: 45 }] },
     })
     const resolver = createDohResolver({ fetch, endpoint: 'https://doh.test/dns-query' })
-    expect(await resolver.resolve('hooks.example.com', signal)).toEqual([{ address: '93.184.216.34', ttl: 120 }, { address: '2606:2800:220:1::1', ttl: 45 }])
+    expect(await resolver.resolve('hooks.example.com', signal)).toEqual([{ address: '93.184.216.34', ttl: 60 }, { address: '2606:2800:220:1::1', ttl: 45 }])
     expect(urls[0]).toBe('https://doh.test/dns-query?name=hooks.example.com&type=A')
+  })
+
+  it('gives each address the shortest TTL in its alias chain', async () => {
+    const { fetch } = dohFetch({
+      A: { Status: 0, Answer: [{ type: 5, data: 'edge.example.net.', TTL: 1 }, { type: 1, data: '93.184.216.34', TTL: 300 }] },
+      AAAA: { Status: 0, Answer: [{ type: 5, data: 'edge.example.net.', TTL: 60 }, { type: 28, data: '2606:2800:220:1::1', TTL: 300 }] },
+    })
+    expect(await createDohResolver({ fetch }).resolve('alias.example.com', signal))
+      .toEqual([{ address: '93.184.216.34', ttl: 1 }, { address: '2606:2800:220:1::1', ttl: 60 }])
   })
 
   it('returns nothing for NXDOMAIN and for a name without answers', async () => {

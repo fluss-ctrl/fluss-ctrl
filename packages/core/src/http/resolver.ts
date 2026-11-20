@@ -63,9 +63,12 @@ export function createDohResolver (options: DohResolverOptions = {}): Resolver {
     if (!parsed) throw new OutboundHttpError('dns_failed', hostname)
     if (parsed.status === NXDOMAIN) return []
     if (parsed.status !== NOERROR) throw new OutboundHttpError('dns_failed', hostname)
-    // CNAME records are followed by the resolver and listed alongside; keep only addresses.
+    // CNAME records are followed by the resolver and listed alongside; return only addresses, but
+    // each carries the shortest TTL in the answer: an alias that may change soon makes every
+    // address behind it just as short-lived.
     const want = type === 'A' ? TYPE_A : TYPE_AAAA
-    return parsed.records.filter((r) => r.type === want).map((r) => ({ address: r.data, ttl: r.TTL }))
+    const minTtl = Math.min(...parsed.records.map((r) => r.TTL))
+    return parsed.records.filter((r) => r.type === want).map((r) => ({ address: r.data, ttl: Math.min(r.TTL, minTtl) }))
   }
 
   return {

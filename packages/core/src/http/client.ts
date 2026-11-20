@@ -78,20 +78,26 @@ export function createHttpClient (options: HttpClientOptions = {}): HttpClient {
       const res = await doFetch(target.toString(), { ...init, headers: base.headers, redirect: 'manual', signal: controller.signal })
       try {
         await assertStillPublic(target, resolver, controller.signal)
+        // assertStillPublic ignores a failed lookup, including one the deadline or caller aborted;
+        // either of those must still fail the request.
+        controller.signal.throwIfAborted()
       } catch (err) {
-        await res.body?.cancel()
+        await res.body?.cancel().catch(() => {})
         throw err
       }
+      // On success the timer and the caller's abort both stay wired to the controller, so they
+      // also bound and cancel reading the response body.
       return res
     } catch (err) {
+      base.signal?.removeEventListener('abort', onCallerAbort)
+      // Cancel any DNS or fetch work still in flight (one of two parallel DoH queries, say).
+      const wasAborted = controller.signal.aborted
+      controller.abort()
       clearTimeout(timer)
       if (timedOut) throw new OutboundHttpError('timeout', host, { cause: err })
-      if (base.signal?.aborted) throw new OutboundHttpError('aborted', host, { cause: err })
+      if (wasAborted && base.signal?.aborted) throw new OutboundHttpError('aborted', host, { cause: err })
       if (err instanceof OutboundHttpError) throw err
       throw new OutboundHttpError('network_error', host, { cause: err })
-    } finally {
-      // On success the timer stays armed: the deadline also covers reading the response body.
-      base.signal?.removeEventListener('abort', onCallerAbort)
     }
   }
 

@@ -64,6 +64,54 @@ describe('requestOnce', () => {
     expect((await createHttpClient({ fetch, resolver: flaky }).requestOnce('https://api.vendor.example/')).status).toBe(200)
   })
 
+  it('fails a HEAD request when the deadline passes during the second lookup', async () => {
+    let n = 0
+    const resolverHangingSecond = {
+      resolve: (_h: string, signal: AbortSignal) => {
+        n++
+        if (n === 1) return Promise.resolve([{ address: '93.184.216.34', ttl: 300 }])
+        return new Promise<ResolvedAddress[]>((_resolve, reject) => {
+          signal.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
+        })
+      },
+    }
+    const { fetch } = recordingFetch([new Response(null)])
+    await expect(createHttpClient({ fetch, resolver: resolverHangingSecond }).requestIdempotent('https://api.vendor.example/', { method: 'HEAD', timeoutMs: 20 }))
+      .rejects.toMatchObject({ code: 'timeout' })
+  })
+
+  it('cancels the other DNS query when one fails', async () => {
+    let aaaaAborted = false
+    const fetch = async (url: string, init?: RequestInit): Promise<Response> => {
+      if (new URL(url).searchParams.get('type') === 'A') return new Response('nope', { status: 500 })
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { aaaaAborted = true; reject(new DOMException('aborted', 'AbortError')) }, { once: true })
+      })
+    }
+    await expect(createHttpClient({ fetch, defaultTimeoutMs: 5_000 }).requestOnce('https://hooks.example.com/'))
+      .rejects.toMatchObject({ code: 'dns_failed' })
+    expect(aaaaAborted).toBe(true)
+  })
+
+  it('lets the caller cancel reading the body after the response arrives', async () => {
+    const fetch = async (_url: string, init?: RequestInit): Promise<Response> => {
+      const body = new ReadableStream<Uint8Array>({
+        start (controller) {
+          controller.enqueue(new TextEncoder().encode('partial'))
+          init?.signal?.addEventListener('abort', () => { controller.error(new DOMException('aborted', 'AbortError')) }, { once: true })
+        },
+      })
+      return new Response(body)
+    }
+    const caller = new AbortController()
+    const res = await createHttpClient({ fetch, resolver, defaultTimeoutMs: 5_000 }).requestOnce('https://api.vendor.example/', { signal: caller.signal })
+    const started = Date.now()
+    const reading = res.text()
+    caller.abort()
+    await expect(reading).rejects.toThrow()
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
   it('never retries, even on a network error or a 503', async () => {
     const fail = recordingFetch([new TypeError('reset')])
     await expect(createHttpClient({ fetch: fail.fetch, resolver }).requestOnce('https://api.vendor.example/', { method: 'POST' }))

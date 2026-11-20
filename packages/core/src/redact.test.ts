@@ -87,6 +87,12 @@ describe('redact', () => {
     expect(redact({ err: new TypeError('bad number 0825551234') })).toEqual({ err: { name: 'TypeError', message: `bad number ${REDACTED}` } })
   })
 
+  it('redacts a credential smuggled into an error name', () => {
+    const err = new Error('boom')
+    err.name = 'Bearer abc123'
+    expect(redact(err)).toEqual({ name: `Bearer ${REDACTED}`, message: 'boom' })
+  })
+
   it('survives cycles', () => {
     const a: Record<string, unknown> = { name: 'a' }
     a.self = a

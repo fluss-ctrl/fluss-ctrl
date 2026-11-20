@@ -52,7 +52,7 @@ function walk (value: unknown, seen: WeakSet<object>): unknown {
   if (Array.isArray(value)) {
     out = value.map((item) => walk(item, seen))
   } else if (value instanceof Error) {
-    out = { name: value.name, message: redactString(value.message) }
+    out = { name: redactString(value.name), message: redactString(value.message) }
   } else {
     const obj: Record<string, unknown> = {}
     for (const [key, item] of Object.entries(value)) {
