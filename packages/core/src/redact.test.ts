@@ -34,9 +34,13 @@ describe('redactString', () => {
   })
 
   it('redacts JWTs and webhook secrets', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2lnbmF0dXJl'
+    // Built at runtime so no credential-shaped literal sits in the repo for secret scanners to flag.
+    const b64url = (s: string): string => btoa(s).replace(/=+$/, '').replaceAll('+', '-').replaceAll('/', '_')
+    const jwt = [b64url('{"alg":"none"}'), b64url('{"sub":"x"}'), b64url('sig')].join('.')
+    expect(jwt.startsWith('eyJ')).toBe(true)
     expect(redactString(`token=${jwt}`)).toBe(`token=${REDACTED}`)
-    expect(redactString('secret whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw')).toBe(`secret ${REDACTED}`)
+    const webhookSecret = ['whsec', 'A'.repeat(32)].join('_')
+    expect(redactString(`secret ${webhookSecret}`)).toBe(`secret ${REDACTED}`)
   })
 
   it('leaves ids, timestamps and short numbers alone', () => {
