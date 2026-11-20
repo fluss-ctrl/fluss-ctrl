@@ -171,6 +171,15 @@ describe('simulator', () => {
       clock.advance(12_000)
       expect((await sim.getStatus(ref)).state).toBe('closed')
     })
+
+    it('no_status: the next command clears hidden status even when it fails', async () => {
+      const { clock, sim } = setup()
+      const ref = device({ latency_ms: 0, autoclose_s: null })
+      await sim.sendCommand(ref, cmd('trigger', 'no_status'))
+      clock.advance(12_000)
+      expect((await sim.sendCommand(ref, cmd('trigger', 'reject'))).error).toMatchObject({ code: 'vendor_error' })
+      expect((await sim.getStatus(ref)).state).toBe('open')
+    })
   })
 
   describe('behaviour', () => {
@@ -189,6 +198,16 @@ describe('simulator', () => {
       expect((await sim.sendCommand(ref, cmd('trigger'))).error).toMatchObject({ code: 'vendor_error', ambiguous: false })
       expect((await sim.getStatus(ref)).state).toBe('closed')
       expect(await sim.sendCommand(ref, cmd('trigger'))).toMatchObject({ acked: true })
+    })
+
+    it('fail_rate applies only to sends without a forced outcome', async () => {
+      const { sim } = setup(() => 0)
+      const ambiguous = device({ fail_rate: 1, latency_ms: 0 }, 'dev_a')
+      expect((await sim.sendCommand(ambiguous, cmd('trigger', 'ambiguous'))).error).toMatchObject({ code: 'timeout', ambiguous: true })
+      expect((await sim.getStatus(ambiguous)).state).toBe('open')
+      const hidden = device({ fail_rate: 1, latency_ms: 0 }, 'dev_b')
+      expect(await sim.sendCommand(hidden, cmd('trigger', 'no_status'))).toMatchObject({ acked: true })
+      expect((await sim.getStatus(hidden)).state).toBe('unknown')
     })
 
     it('a door lock releases at once and relocks after autoclose_s', async () => {

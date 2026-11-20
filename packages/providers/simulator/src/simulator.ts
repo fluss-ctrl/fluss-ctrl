@@ -110,6 +110,9 @@ export function createSimulator (options: SimulatorOptions = {}): SimulatorProvi
         return { acked: false, error: new ProviderError('unsupported', `Action ${cmd.action} is not supported by this device`) }
       }
       const outcome = simulate.data
+      // `no_status` hides status only until the next command, whatever that command's outcome.
+      const known = devices.get(device.device_id)
+      if (known) known.statusHidden = false
 
       if (outcome === 'timeout') {
         // The request never arrives, but the caller cannot know that: the send is ambiguous.
@@ -123,7 +126,7 @@ export function createSimulator (options: SimulatorOptions = {}): SimulatorProvi
       if (outcome === 'reject') {
         return { acked: false, error: new ProviderError('vendor_error', 'Simulated vendor rejection', { detail: { simulated: 'reject' } }) }
       }
-      if (b.fail_rate > 0 && random() < b.fail_rate) {
+      if (outcome === undefined && b.fail_rate > 0 && random() < b.fail_rate) {
         return { acked: false, error: new ProviderError('vendor_error', 'Simulated random failure', { detail: { simulated: 'fail_rate' } }) }
       }
 
@@ -133,7 +136,7 @@ export function createSimulator (options: SimulatorOptions = {}): SimulatorProvi
       const now = clock.now()
       const sim = deviceAt(device, b, now)
       sim.gate = pulse(sim.gate, gateParams(b), now)
-      sim.statusHidden = outcome === 'no_status'
+      if (outcome === 'no_status') sim.statusHidden = true
 
       if (outcome === 'ambiguous') {
         // The pulse reached the device, but the reply was lost.

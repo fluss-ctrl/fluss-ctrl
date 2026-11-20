@@ -20,7 +20,7 @@ runs against it in CI. It talks to no network and needs no credentials.
 | `online` | `true` | `false` reads offline and refuses every command as `offline` |
 | `verification_level` | `status` | `none`, `ack` or `status`; `status` needs a status model |
 | `latency_ms` | `300` | waited on every status read and send |
-| `fail_rate` | `0` | chance (0–1) a send fails as `vendor_error` without moving the gate |
+| `fail_rate` | `0` | chance (0–1) a send without `params.simulate` fails as `vendor_error` without moving the gate |
 | `status_model` | `gate_slow` | `gate_slow`, `door_lock` (moves at once), or `none` (reads `unknown`) |
 | `pulse_mode` | `toggle` | `toggle` or `open_only` (SPEC §4 `controls.pulse_mode`) |
 | `autoclose_s` | `15` | seconds a fully open gate waits before closing itself; `null` for none |
