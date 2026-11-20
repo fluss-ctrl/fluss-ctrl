@@ -1,0 +1,7 @@
+# CodeRabbit configuration (V2 format): https://docs.coderabbit.ai/reference/configuration
+# PRs open as drafts and leave draft once CI is green; reviewing drafts lets
+# the review run alongside CI instead of after it (#25).
+reviews:
+  auto_review:
+    enabled: true
+    drafts: true
