@@ -1,4 +1,9 @@
 // Domain logic: Zod schemas, grant evaluation, command state machine, errors, HTTP client.
-// Empty until its first issue lands; it exists so the workspace, its runners and the
-// dependency rules are proven from day one.
+// The outbound HTTP client is a separate entry point: `@flussctrl/core/http`.
 export const packageName = '@flussctrl/core'
+
+export { ApiError, ERROR_CODES, ERROR_DOCS_BASE, isErrorCode, problemDetails } from './errors.ts'
+export type { ErrorCode, ProblemDetails, ProblemOptions } from './errors.ts'
+export { createIdGenerator, ID_PREFIXES, idTimestamp, isId, newId } from './ids.ts'
+export type { Id, IdGeneratorDeps, IdPrefix } from './ids.ts'
+export { REDACTED, redact, redactString } from './redact.ts'
