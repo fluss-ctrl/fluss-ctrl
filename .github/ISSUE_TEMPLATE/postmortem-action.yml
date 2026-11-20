@@ -1,0 +1,62 @@
+name: Postmortem action
+description: A follow-up action from a blameless postmortem or retro.
+title: "<type>: <action>"
+body:
+  - type: input
+    id: postmortem
+    attributes:
+      label: Postmortem
+      description: Link to the postmortem (written from docs/postmortem-template.md) or retro notes.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of action
+      options:
+        - prevent (stop it happening again)
+        - detect (find out sooner)
+        - mitigate (reduce the impact)
+        - process (runbook, review or communication)
+    validations:
+      required: true
+  - type: textarea
+    id: action
+    attributes:
+      label: Action
+      description: What will change, and how it addresses the contributing factor named in the postmortem.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Given / When / Then. A bug fix includes a test that would have caught the incident.
+      value: |
+        - **Given** …, **when** …, **then** …
+    validations:
+      required: true
+  - type: input
+    id: owner
+    attributes:
+      label: Owner
+      description: The person accountable for closing this.
+    validations:
+      required: true
+  - type: input
+    id: due
+    attributes:
+      label: Due date
+      placeholder: YYYY-MM-DD
+    validations:
+      required: true
+  - type: dropdown
+    id: risk
+    attributes:
+      label: Risk level
+      options:
+        - low
+        - medium
+        - high
+    validations:
+      required: true

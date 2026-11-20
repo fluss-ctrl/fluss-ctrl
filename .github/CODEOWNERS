@@ -1,0 +1,50 @@
+# CODEOWNERS for Fluss Ctrl: the high-risk paths (PLAN §8 Review, decision 25; CLAUDE.md "Working style").
+#
+# TODO(#19): owners are not decided yet. Until #19 names them, these patterns have no owners, so
+# GitHub requests no code-owner review for them. When #19 lands, put the owners on each line. Auth,
+# billing, the command and emergency path, and unofficial providers need at least two named owners
+# (two approvals, PLAN §8).
+#
+# Later lines win over earlier ones. Paths that do not exist yet are listed from SPEC §16 so they are
+# covered the day they are created.
+
+# Auth (SPEC §3)
+/apps/**/auth/
+/packages/**/auth/
+
+# Billing and metering (SPEC §15)
+/apps/**/billing/
+/packages/**/billing/
+/apps/**/metering/
+/packages/**/metering/
+
+# Command path: routes, the DeviceCoordinator Durable Object, verification (SPEC §7)
+/apps/api/src/**/commands/
+/apps/api/src/**/coordinator/
+
+# Emergency path (SPEC §4 Emergency; Phase 4)
+/apps/**/emergency/
+/packages/**/emergency/
+
+# Domain logic: grant evaluation, command state machine, errors, http client and SSRF guard
+/packages/core/
+
+# Migrations
+/packages/db/migrations/
+
+# Unofficial providers (SPEC §22)
+/packages/providers/accentronix/
+/packages/providers/centurion/
+
+# Repository rules and checks
+/.github/
+/.github/CODEOWNERS
+/lefthook.yml
+/.squawk.toml
+/.oasdiff.yaml
+/.dependency-cruiser.cjs
+
+# Spec, plan and rules
+/SPEC.md
+/PLAN.md
+/CLAUDE.md
