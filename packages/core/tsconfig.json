@@ -1,4 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Web platform APIs only (fetch, WebCrypto, AbortSignal), the surface Workers and Node share.
+    // No Node or Workers types: core must run on either.
+    "lib": ["ES2023", "DOM"]
+  },
   "include": ["src", "vitest.config.ts"]
 }
