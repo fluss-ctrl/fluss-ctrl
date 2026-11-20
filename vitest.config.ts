@@ -6,7 +6,7 @@ export default defineConfig({
   test: {
     // Match config files, not folders: `packages/*` would also match `packages/providers`
     // itself and run the provider tests twice.
-    projects: ['apps/*/vitest.config.ts', 'packages/*/vitest.config.ts', 'packages/providers/*/vitest.config.ts'],
+    projects: ['apps/*/vitest.config.ts', 'packages/*/vitest.config.ts', 'packages/providers/*/vitest.config.ts', 'scripts/vitest.config.mjs'],
     coverage: {
       provider: 'v8',
       include: ['apps/*/src/**', 'packages/*/src/**', 'packages/providers/*/src/**'],
