@@ -35,27 +35,44 @@ refuses before sending, uses plain `fetch`, and keeps the check in `packages/cor
 can inject a resolver.
 
 `packages/core/http` resolves A and AAAA records through Cloudflare's JSON DoH endpoint
-(`cloudflare-dns.com/dns-query`), refuses the request unless every address is public, and then
-calls `fetch()` with `redirect: 'manual'`. IP literals are checked directly; `localhost`, dotless
-names and `.local`/`.internal`-style suffixes are refused without a lookup. Any resolver failure
-fails closed. The lookup runs inside the request deadline.
+(`cloudflare-dns.com/dns-query`) and calls `fetch()` with `redirect: 'manual'` only if all of
+these hold (the stricter design chosen in review, 2026-11-20):
+
+* `https://` on port 443, no user info, and a hostname: IP literals are refused, public or not.
+* `localhost`, dotless names and `.local`/`.internal`-style suffixes are refused without a lookup.
+* Every A and AAAA address is public, and there is at least one.
+* Every answer's TTL is at least 30 s (`MIN_DNS_TTL_S`). Rebinding needs an answer that changes
+  between our lookup and `fetch()`'s own; refusing short-lived answers narrows that window.
+* Any resolver failure fails closed. The lookup runs inside the request deadline.
+
+After the response, the name is resolved again. If any address is now non-public the request fails
+with `destination_changed` and the body is discarded. That cannot unsend a request, but a rebinding
+attempt becomes a visible failure instead of a silent success. A failed second lookup is ignored, so
+a DoH hiccup cannot turn a sent command into an ambiguous one.
 
 ### Consequences
 
 * Good, because nothing reaches a blocked destination, and redirects cannot bounce a request to one.
 * Good, because the resolver is an interface: tests use a static table, and a later platform
   adapter (SPEC §21.3) can supply its own.
-* Bad, because of DNS rebinding: `fetch()` resolves again, so a name with a very short TTL could
-  answer differently a moment later. Whether Cloudflare refuses Worker subrequests to private
-  addresses has not been verified, so the guard does not count on it.
-* Bad, because two DoH queries add latency to every guarded request (low, since 1.1.1.1 answers
-  from the same edge). A short cache bounded by the record TTL is a possible follow-up.
+* Bad, because the rebinding gap is narrowed, not closed: `fetch()` resolves again, and nothing on
+  Workers can pin it to the address we checked. Whether Cloudflare refuses Worker subrequests to
+  private addresses has not been verified, so the guard does not count on it. Closing the gap
+  needs an egress proxy outside Workers that checks the address it actually connects to (for
+  example Stripe's Smokescreen); that is a stack change with its own ADR, to decide before webhook
+  delivery calls user-supplied URLs.
+* Bad, because four DoH queries (two before, two after) add latency to every guarded request (low,
+  since 1.1.1.1 answers from the same edge). A short cache bounded by the record TTL is a possible
+  follow-up.
+* Bad, because hosts whose DNS TTL is under 30 s, or that need a port other than 443, cannot be
+  webhook destinations or provider endpoints.
 
 ### Confirmation
 
-`packages/core/src/http/*.test.ts`: refusal of private, loopback, link-local, metadata, IPv4-mapped
-and NAT64 addresses, of names resolving to any of them, and of unresolvable names, with no request
-sent; the deadline covering the lookup.
+`packages/core/src/http/*.test.ts`: refusal of IP literals, other ports, local names, names
+resolving to private, loopback, link-local, metadata, IPv4-mapped or NAT64 addresses, short TTLs
+and unresolvable names, with no request sent; a name that rebinds after the request failing with
+`destination_changed`; the deadline covering the lookup.
 
 ## Pros and Cons of the Options
 
@@ -64,6 +81,12 @@ sent; the deadline covering the lookup.
 * Good, because the check and the connection would use the same address, closing the rebinding gap.
 * Bad, because `connect()` takes a hostname and does not expose the peer address either, and we
   would be writing an HTTP/1.1 client with TLS by hand: far more code on the command path.
+
+### Egress proxy outside Workers
+
+* Good, because the proxy resolves once, checks, and connects to that same address: no gap.
+* Bad, because it is a service to host, patch and monitor, adds a hop to every guarded request,
+  and changes the stack (PLAN §3). Left for its own ADR.
 
 ### IP literals only
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 import { createHttpClient, type HttpClient, type RequestOnceOptions } from './client.ts'
+import type { ResolvedAddress } from './resolver.ts'
 import { hangingFetch, staticResolver } from './test-helpers.ts'
 
 const resolver = staticResolver({ 'api.vendor.example': ['93.184.216.34'] })
@@ -40,6 +41,29 @@ describe('requestOnce', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('fails a request whose name rebinds to a private address after it was sent', async () => {
+    const rebinding = staticResolver({
+      'rebind.example': (call) => [{ address: call === 1 ? '93.184.216.34' : '169.254.169.254', ttl: 300 }],
+    })
+    const { fetch, calls } = recordingFetch([new Response('secret metadata')])
+    await expect(createHttpClient({ fetch, resolver: rebinding }).requestOnce('https://rebind.example/'))
+      .rejects.toMatchObject({ code: 'destination_changed', host: 'rebind.example' })
+    expect(calls).toHaveLength(1)
+  })
+
+  it('keeps the response when the second lookup itself fails', async () => {
+    let n = 0
+    const flaky = {
+      resolve: async () => {
+        n++
+        if (n > 1) throw new Error('doh down')
+        return [{ address: '93.184.216.34', ttl: 300 }]
+      },
+    }
+    const { fetch } = recordingFetch([new Response('ok')])
+    expect((await createHttpClient({ fetch, resolver: flaky }).requestOnce('https://api.vendor.example/')).status).toBe(200)
+  })
+
   it('never retries, even on a network error or a 503', async () => {
     const fail = recordingFetch([new TypeError('reset')])
     await expect(createHttpClient({ fetch: fail.fetch, resolver }).requestOnce('https://api.vendor.example/', { method: 'POST' }))
@@ -69,7 +93,7 @@ describe('requestOnce', () => {
 
   it('applies the deadline to DNS resolution too', async () => {
     const slowResolver = {
-      resolve: (_h: string, signal: AbortSignal) => new Promise<string[]>((_resolve, reject) => {
+      resolve: (_h: string, signal: AbortSignal) => new Promise<ResolvedAddress[]>((_resolve, reject) => {
         signal.addEventListener('abort', () => { reject(new Error('aborted')) }, { once: true })
       }),
     }
@@ -91,7 +115,7 @@ describe('requestOnce', () => {
     controller.abort()
     const { fetch, calls } = recordingFetch([])
     const slowResolver = {
-      resolve: (_h: string, signal: AbortSignal) => signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve(['93.184.216.34']),
+      resolve: (_h: string, signal: AbortSignal) => signal.aborted ? Promise.reject(new Error('aborted')) : Promise.resolve([{ address: '93.184.216.34', ttl: 300 }]),
     }
     await expect(createHttpClient({ fetch, resolver: slowResolver }).requestOnce('https://api.vendor.example/', { signal: controller.signal }))
       .rejects.toMatchObject({ code: 'aborted' })
@@ -109,12 +133,12 @@ describe('requestOnce', () => {
       seen.push(new URL(url).host)
       if (url.startsWith('https://cloudflare-dns.com/')) {
         const type = new URL(url).searchParams.get('type')
-        return Response.json(type === 'A' ? { Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] } : { Status: 0 })
+        return Response.json(type === 'A' ? { Status: 0, Answer: [{ type: 1, data: '93.184.216.34', TTL: 300 }] } : { Status: 0 })
       }
       return new Response('ok')
     }
     expect((await createHttpClient({ fetch }).requestOnce('https://hooks.example.com/')).status).toBe(200)
-    expect(seen).toEqual(['cloudflare-dns.com', 'cloudflare-dns.com', 'hooks.example.com'])
+    expect(seen).toEqual(['cloudflare-dns.com', 'cloudflare-dns.com', 'hooks.example.com', 'cloudflare-dns.com', 'cloudflare-dns.com'])
   })
 })
 
@@ -158,7 +182,7 @@ describe('requestIdempotent', () => {
 
     const blocked = recordingFetch([])
     await expect(createHttpClient({ fetch: blocked.fetch, resolver, sleep: noSleep }).requestIdempotent('https://127.0.0.1/', { retries: 2 }))
-      .rejects.toMatchObject({ code: 'destination_blocked' })
+      .rejects.toMatchObject({ code: 'invalid_url' })
     expect(blocked.calls).toHaveLength(0)
   })
 
@@ -193,10 +217,10 @@ describe('defaults', () => {
 
   it('resolves through the global fetch when no resolver or fetch is injected', async () => {
     const global = vi.fn(async (url: string) => url.startsWith('https://cloudflare-dns.com/')
-      ? Response.json({ Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] })
+      ? Response.json({ Status: 0, Answer: [{ type: 1, data: '93.184.216.34', TTL: 300 }] })
       : new Response('ok'))
     vi.stubGlobal('fetch', global)
     expect((await createHttpClient().requestOnce('https://hooks.example.com/')).status).toBe(200)
-    expect(global).toHaveBeenCalledTimes(3)
+    expect(global).toHaveBeenCalledTimes(5)
   })
 })

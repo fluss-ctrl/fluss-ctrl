@@ -4,8 +4,10 @@
 // because a query string can hold a credential.
 
 export type OutboundErrorCode =
-  | 'invalid_url' // not a URL, not https, or carries user info
-  | 'destination_blocked' // resolves to, or is, a private, loopback, link-local or metadata address
+  | 'invalid_url' // not a URL, not https, not port 443, an IP literal, or carries user info
+  | 'destination_blocked' // resolves to a private, loopback, link-local or metadata address, or is a local name
+  | 'destination_unstable' // a DNS answer's TTL is below the minimum, so it could change before fetch connects
+  | 'destination_changed' // after the response, the name resolved to a non-public address (possible rebinding)
   | 'destination_unresolvable' // no A or AAAA records
   | 'dns_failed' // the resolver itself failed
   | 'timeout' // the request's deadline passed before a response arrived

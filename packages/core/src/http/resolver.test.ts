@@ -18,11 +18,11 @@ function dohFetch (byType: Record<string, unknown>, status = 200) {
 describe('createDohResolver', () => {
   it('returns A and AAAA addresses and skips CNAMEs', async () => {
     const { fetch, urls } = dohFetch({
-      A: { Status: 0, Answer: [{ type: 5, data: 'edge.example.net.' }, { type: 1, data: '93.184.216.34' }] },
-      AAAA: { Status: 0, Answer: [{ type: 28, data: '2606:2800:220:1::1' }] },
+      A: { Status: 0, Answer: [{ type: 5, data: 'edge.example.net.', TTL: 60 }, { type: 1, data: '93.184.216.34', TTL: 120 }] },
+      AAAA: { Status: 0, Answer: [{ type: 28, data: '2606:2800:220:1::1', TTL: 45 }] },
     })
     const resolver = createDohResolver({ fetch, endpoint: 'https://doh.test/dns-query' })
-    expect(await resolver.resolve('hooks.example.com', signal)).toEqual(['93.184.216.34', '2606:2800:220:1::1'])
+    expect(await resolver.resolve('hooks.example.com', signal)).toEqual([{ address: '93.184.216.34', ttl: 120 }, { address: '2606:2800:220:1::1', ttl: 45 }])
     expect(urls[0]).toBe('https://doh.test/dns-query?name=hooks.example.com&type=A')
   })
 
@@ -35,7 +35,8 @@ describe('createDohResolver', () => {
     ['a SERVFAIL', { Status: 2 }, 200],
     ['an HTTP error', { Status: 0 }, 500],
     ['a malformed body', 'not json', 200],
-    ['a malformed answer', { Status: 0, Answer: [{ type: '1', data: 1 }] }, 200],
+    ['a malformed answer', { Status: 0, Answer: [{ type: '1', data: 1, TTL: 60 }] }, 200],
+    ['an answer without a TTL', { Status: 0, Answer: [{ type: 1, data: '93.184.216.34' }] }, 200],
     ['a non-array answer', { Status: 0, Answer: {} }, 200],
     ['a null answer entry', { Status: 0, Answer: [null] }, 200],
     ['a missing status', {}, 200],

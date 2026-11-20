@@ -449,7 +449,7 @@ Ingestion is idempotent and does not double-count. Every ingested entry is keyed
 - Body is the event envelope. One event per request. Deliveries ordered best-effort; consumers must be idempotent on `id`. `webhook-id` is the event id and stays the same across retries and replays.
 - Retries via Queues: 1 m, 5 m, 30 m, 2 h, 6 h, 24 h (6 attempts), then DLQ. Endpoint auto-disabled after 7 days of continuous failure (`webhook.endpoint_disabled` emitted to the org's other endpoints and shown in console). Manual and bulk replay from console or API.
 - Timeout per delivery 10 s; 2xx = success; 410 = disable endpoint immediately.
-- SSRF guard: endpoint URLs must be `https://`, resolve to public addresses (private, loopback, link-local and cloud-metadata ranges rejected) both at creation and at delivery time, and redirects are not followed.
+- SSRF guard: endpoint URLs must be `https://` on port 443 with a hostname (no IP literals, no user info), and resolve only to public addresses (private, loopback, link-local and cloud-metadata ranges rejected) with DNS answers that live at least 30 s, both at creation and at delivery time. The name is resolved again after each delivery, and a delivery whose name now points at a non-public address counts as failed. Redirects are not followed (ADR-0002).
 - Sandbox events deliver only to sandbox endpoints.
 - Two queues: `webhooks` and `webhooks-priority`. Emergency events and `access.denied` during an active emergency go to the priority queue; same retry policy, separate backlog.
 

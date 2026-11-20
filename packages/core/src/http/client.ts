@@ -1,5 +1,6 @@
 // The one outbound HTTP client (SPEC §10 rules; CLAUDE.md "Providers"). Every request:
-//   - passes the SSRF guard first, so a refused destination is never contacted;
+//   - passes the SSRF guard first, so a refused destination is never contacted, and is checked
+//     again after the response, so a name that rebinds to a private address fails loudly;
 //   - runs under a deadline covering DNS, connection and the response (default 8 s, SPEC §7.2);
 //   - never follows redirects (SPEC §8.2); a 3xx comes back to the caller as a response.
 //
@@ -10,7 +11,7 @@
 //   - requestIdempotent: GET or HEAD only, may retry network errors and 502/503/504.
 
 import { OutboundHttpError } from './errors.ts'
-import { assertPublicDestination } from './guard.ts'
+import { assertPublicDestination, assertStillPublic } from './guard.ts'
 import { createDohResolver, type FetchLike, type Resolver } from './resolver.ts'
 
 export const DEFAULT_TIMEOUT_MS = 8_000
@@ -74,7 +75,14 @@ export function createHttpClient (options: HttpClientOptions = {}): HttpClient {
       host = target.hostname
       // A deadline or caller abort during DNS stops here, before anything reaches the destination.
       controller.signal.throwIfAborted()
-      return await doFetch(target.toString(), { ...init, headers: base.headers, redirect: 'manual', signal: controller.signal })
+      const res = await doFetch(target.toString(), { ...init, headers: base.headers, redirect: 'manual', signal: controller.signal })
+      try {
+        await assertStillPublic(target, resolver, controller.signal)
+      } catch (err) {
+        await res.body?.cancel()
+        throw err
+      }
+      return res
     } catch (err) {
       clearTimeout(timer)
       if (timedOut) throw new OutboundHttpError('timeout', host, { cause: err })

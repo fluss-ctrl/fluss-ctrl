@@ -3,9 +3,15 @@
 
 import { OutboundHttpError } from './errors.ts'
 
+export interface ResolvedAddress {
+  address: string
+  /** Seconds the answer may be cached for. */
+  ttl: number
+}
+
 export interface Resolver {
-  /** Every A and AAAA address for the name; an empty array when it has none. */
-  resolve (hostname: string, signal: AbortSignal): Promise<string[]>
+  /** Every A and AAAA record for the name; an empty array when it has none. */
+  resolve (hostname: string, signal: AbortSignal): Promise<ResolvedAddress[]>
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
@@ -21,7 +27,7 @@ const NXDOMAIN = 3
 const TYPE_A = 1
 const TYPE_AAAA = 28
 
-interface DohAnswer { type: number, data: string }
+interface DohAnswer { type: number, data: string, TTL: number }
 
 function answers (body: unknown): { status: number, records: DohAnswer[] } | null {
   if (typeof body !== 'object' || body === null) return null
@@ -32,9 +38,9 @@ function answers (body: unknown): { status: number, records: DohAnswer[] } | nul
   const records: DohAnswer[] = []
   for (const a of Answer as unknown[]) {
     if (typeof a !== 'object' || a === null) return null
-    const { type, data } = a as { type?: unknown, data?: unknown }
-    if (typeof type !== 'number' || typeof data !== 'string') return null
-    records.push({ type, data })
+    const { type, data, TTL } = a as { type?: unknown, data?: unknown, TTL?: unknown }
+    if (typeof type !== 'number' || typeof data !== 'string' || typeof TTL !== 'number') return null
+    records.push({ type, data, TTL })
   }
   return { status: Status, records }
 }
@@ -43,7 +49,7 @@ export function createDohResolver (options: DohResolverOptions = {}): Resolver {
   const endpoint = options.endpoint ?? 'https://cloudflare-dns.com/dns-query'
   const doFetch: FetchLike = options.fetch ?? ((input, init) => fetch(input, init))
 
-  async function query (hostname: string, type: 'A' | 'AAAA', signal: AbortSignal): Promise<string[]> {
+  async function query (hostname: string, type: 'A' | 'AAAA', signal: AbortSignal): Promise<ResolvedAddress[]> {
     const url = `${endpoint}?name=${encodeURIComponent(hostname)}&type=${type}`
     let res: Response
     try {
@@ -59,7 +65,7 @@ export function createDohResolver (options: DohResolverOptions = {}): Resolver {
     if (parsed.status !== NOERROR) throw new OutboundHttpError('dns_failed', hostname)
     // CNAME records are followed by the resolver and listed alongside; keep only addresses.
     const want = type === 'A' ? TYPE_A : TYPE_AAAA
-    return parsed.records.filter((r) => r.type === want).map((r) => r.data)
+    return parsed.records.filter((r) => r.type === want).map((r) => ({ address: r.data, ttl: r.TTL }))
   }
 
   return {

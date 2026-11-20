@@ -10,7 +10,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['apps/*/src/**', 'packages/*/src/**', 'packages/providers/*/src/**'],
-      exclude: ['**/*.test.ts', '**/*.d.ts'],
+      // Docs pages (apps/docs/src/content) are content, not code.
+      exclude: ['**/*.test.ts', '**/*.d.ts', '**/*.md', '**/*.mdx'],
       reporter: ['text', 'json-summary', 'lcov'],
       // Coverage is a guide everywhere except packages/core, where a missed branch can open or
       // lock a gate (SPEC §11, PLAN §13 exception 2). This floor is never lowered to pass a PR.
