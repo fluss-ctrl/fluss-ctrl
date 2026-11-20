@@ -1,0 +1,58 @@
+import { describe, expect, it } from 'vitest'
+import { OutboundHttpError } from './errors.ts'
+import { createDohResolver } from './resolver.ts'
+
+const signal = new AbortController().signal
+
+function dohFetch (byType: Record<string, unknown>, status = 200) {
+  const urls: string[] = []
+  const fetch = async (input: string, init?: RequestInit): Promise<Response> => {
+    urls.push(input)
+    expect(new Headers(init?.headers).get('accept')).toBe('application/dns-json')
+    const type = new URL(input).searchParams.get('type') ?? ''
+    return new Response(JSON.stringify(byType[type]), { status })
+  }
+  return { fetch, urls }
+}
+
+describe('createDohResolver', () => {
+  it('returns A and AAAA addresses and skips CNAMEs', async () => {
+    const { fetch, urls } = dohFetch({
+      A: { Status: 0, Answer: [{ type: 5, data: 'edge.example.net.' }, { type: 1, data: '93.184.216.34' }] },
+      AAAA: { Status: 0, Answer: [{ type: 28, data: '2606:2800:220:1::1' }] },
+    })
+    const resolver = createDohResolver({ fetch, endpoint: 'https://doh.test/dns-query' })
+    expect(await resolver.resolve('hooks.example.com', signal)).toEqual(['93.184.216.34', '2606:2800:220:1::1'])
+    expect(urls[0]).toBe('https://doh.test/dns-query?name=hooks.example.com&type=A')
+  })
+
+  it('returns nothing for NXDOMAIN and for a name without answers', async () => {
+    const { fetch } = dohFetch({ A: { Status: 3 }, AAAA: { Status: 0 } })
+    expect(await createDohResolver({ fetch }).resolve('nope.example.com', signal)).toEqual([])
+  })
+
+  it.each([
+    ['a SERVFAIL', { Status: 2 }, 200],
+    ['an HTTP error', { Status: 0 }, 500],
+    ['a malformed body', 'not json', 200],
+    ['a malformed answer', { Status: 0, Answer: [{ type: '1', data: 1 }] }, 200],
+    ['a non-array answer', { Status: 0, Answer: {} }, 200],
+    ['a null answer entry', { Status: 0, Answer: [null] }, 200],
+    ['a missing status', {}, 200],
+  ])('fails closed on %s', async (_name, body, status) => {
+    const { fetch } = dohFetch({ A: body, AAAA: body }, status)
+    await expect(createDohResolver({ fetch }).resolve('x.example.com', signal)).rejects.toMatchObject({ code: 'dns_failed' })
+  })
+
+  it('reports a fetch failure as dns_failed', async () => {
+    const fetch = async (): Promise<Response> => { throw new TypeError('connection refused') }
+    await expect(createDohResolver({ fetch }).resolve('x.example.com', signal)).rejects.toBeInstanceOf(OutboundHttpError)
+  })
+
+  it('passes an abort through untouched', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fetch = async (): Promise<Response> => { throw new DOMException('aborted', 'AbortError') }
+    await expect(createDohResolver({ fetch }).resolve('x.example.com', controller.signal)).rejects.toBeInstanceOf(DOMException)
+  })
+})

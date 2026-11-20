@@ -16,6 +16,7 @@
     "wrangler": "4.165.0"
   },
   "dependencies": {
+    "@flussctrl/core": "workspace:*",
     "hono": "4.13.19",
     "zod": "4.6.7"
   }

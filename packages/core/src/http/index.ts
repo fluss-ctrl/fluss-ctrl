@@ -1,0 +1,8 @@
+export { createHttpClient, DEFAULT_TIMEOUT_MS, MAX_IDEMPOTENT_RETRIES } from './client.ts'
+export type { HttpClient, HttpClientOptions, IdempotentRequestOptions, RequestOnceOptions } from './client.ts'
+export { OutboundHttpError } from './errors.ts'
+export type { OutboundErrorCode } from './errors.ts'
+export { assertPublicDestination } from './guard.ts'
+export { isPublicIp, parseIp } from './ip.ts'
+export { createDohResolver } from './resolver.ts'
+export type { DohResolverOptions, FetchLike, Resolver } from './resolver.ts'
