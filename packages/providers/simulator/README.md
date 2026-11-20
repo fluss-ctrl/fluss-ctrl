@@ -52,7 +52,7 @@ Pass `params.simulate` on a command:
 | `ambiguous` | `timeout`, ambiguous (the reply was lost) | yes |
 | `offline` | `offline` | no |
 | `reject` | `vendor_error` | no |
-| `no_status` | acked; status reads `unknown` until the next command | yes |
+| `no_status` | acked as for any send (not at level `none`); status reads `unknown` until the next command | yes |
 
 ## Quirks
 
