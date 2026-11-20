@@ -51,6 +51,14 @@ describe('manualClock', () => {
     expect(clock.now()).toBe(1_000)
   })
 
+  it('rejects a non-finite sleep without stalling later sleeps', async () => {
+    const clock = manualClock(0)
+    await expect(clock.sleep(Number.NaN)).rejects.toThrow(RangeError)
+    await expect(clock.sleep(Number.POSITIVE_INFINITY)).rejects.toThrow(RangeError)
+    await clock.sleep(10)
+    expect(clock.now()).toBe(10)
+  })
+
   it('resumes sleeps with the same deadline in the order they started', async () => {
     const clock = manualClock(0)
     const order: number[] = []

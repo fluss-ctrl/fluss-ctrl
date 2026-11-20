@@ -61,7 +61,11 @@ export function manualClock (startMs = Date.UTC(2026, 10, 4)): ManualClock {
       if (ms < 0) throw new RangeError('a clock cannot move backwards')
       set(now + ms)
     },
-    sleep: (ms) => new Promise<void>((resolve) => {
+    sleep: (ms) => new Promise<void>((resolve, reject) => {
+      if (!Number.isFinite(ms)) {
+        reject(new RangeError('sleep duration must be finite'))
+        return
+      }
       pending.push({ until: now + Math.max(0, ms), seq: seq++, resolve })
       if (!draining) {
         draining = true
