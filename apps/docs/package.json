@@ -1,0 +1,18 @@
+{
+  "name": "@flussctrl/docs",
+  "version": "0.0.0",
+  "description": "Developer docs: Astro Starlight guides and the Scalar API reference (placeholder).",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "6.0.3",
+    "vitest": "5.1.1"
+  }
+}

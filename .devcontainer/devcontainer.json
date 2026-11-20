@@ -1,0 +1,19 @@
+{
+  "name": "fluss-ctrl",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-22-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers-extra/features/gitleaks:1": {}
+  },
+  "postCreateCommand": "corepack enable && pnpm install --frozen-lockfile && pnpm exec lefthook install",
+  "forwardPorts": [8787],
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "vitest.explorer"],
+      "settings": {
+        "editor.formatOnSave": false,
+        "editor.codeActionsOnSave": { "source.fixAll.eslint": "explicit" }
+      }
+    }
+  }
+}

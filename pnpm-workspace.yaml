@@ -1,0 +1,10 @@
+packages:
+  - apps/*
+  - packages/*
+  - packages/providers/*
+
+# Dependencies allowed to run install scripts. lefthook is left out on purpose: hooks are
+# installed explicitly with `pnpm exec lefthook install`.
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

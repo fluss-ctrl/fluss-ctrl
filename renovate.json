@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", ":semanticCommitTypeAll(chore)", ":semanticCommitScope(deps)"],
+  "timezone": "Africa/Johannesburg",
+  "schedule": ["before 8am on monday"],
+  "labels": ["dependencies"],
+  "rangeStrategy": "pin",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 8am on monday"]
+  },
+  "packageRules": [
+    {
+      "description": "One weekly PR for all non-major updates",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "Dev-only non-major updates may automerge once every required check is green (PLAN §8)",
+      "matchDepTypes": ["devDependencies"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": true
+    },
+    {
+      "description": "Majors one at a time, grouped per monorepo",
+      "matchUpdateTypes": ["major"],
+      "extends": ["group:monorepos"]
+    }
+  ]
+}
