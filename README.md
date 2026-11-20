@@ -13,7 +13,8 @@ verification, the event log and webhooks; device connectivity lives behind `Prov
 ## Getting started
 
 Requirements: Node 22 (see `.nvmrc`), pnpm 10 (via `corepack enable`), Docker for integration
-tests. Or open the repo in the dev container (`.devcontainer/`), which sets all of this up.
+tests, and [gitleaks](https://github.com/gitleaks/gitleaks#installing) on your PATH for the
+pre-commit hook (`brew install gitleaks`, or a release binary). Or open the repo in the dev container (`.devcontainer/`), which sets all of this up.
 
 ```sh
 corepack enable

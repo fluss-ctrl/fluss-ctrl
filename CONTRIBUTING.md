@@ -35,7 +35,8 @@ with `pnpm exec lefthook install` (the dev container does this). Never bypass it
 - Zod at every boundary. Prefer the standard library and WebCrypto over a new dependency; a new
   dependency needs a one-line reason in the PR. Dependencies are pinned to exact versions and
   Renovate updates them weekly.
-- Never add `.skip`/`.only`, an `eslint-disable` or `@ts-expect-error` without a reason and an issue.
+- Never commit `.skip` or `.only`. Never add an `eslint-disable` or `@ts-expect-error` without a
+  reason and an issue.
 
 ## Decisions and docs
 

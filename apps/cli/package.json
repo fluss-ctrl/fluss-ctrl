@@ -2,7 +2,7 @@
   "name": "@flussctrl/cli",
   "version": "0.0.0",
   "description": "fctl, the Fluss Ctrl CLI (placeholder).",
-  "private": false,
+  "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

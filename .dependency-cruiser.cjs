@@ -13,8 +13,8 @@ module.exports = {
     {
       name: 'routes-not-to-db',
       severity: 'error',
-      comment: 'routes -> core -> db: routes reach the database only through packages/core.',
-      from: { path: '^apps/api/src/routes/' },
+      comment: 'routes -> core -> db: routes (the entrypoint and routes/) reach the database only through packages/core.',
+      from: { path: '^apps/api/src/(routes/|index\\.ts$)' },
       to: { path: '^packages/db/' },
     },
     {

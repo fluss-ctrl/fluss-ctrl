@@ -2,7 +2,7 @@
   "name": "@flussctrl/webhooks",
   "version": "0.0.0",
   "description": "Standard Webhooks sign and verify helpers (published).",
-  "private": false,
+  "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts"

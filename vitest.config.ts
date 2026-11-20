@@ -4,7 +4,9 @@ import { defineConfig } from 'vitest/config'
 // coverage; `pnpm --filter <pkg> test` runs one workspace on its own.
 export default defineConfig({
   test: {
-    projects: ['apps/*', 'packages/*', 'packages/providers/*'],
+    // Match config files, not folders: `packages/*` would also match `packages/providers`
+    // itself and run the provider tests twice.
+    projects: ['apps/*/vitest.config.ts', 'packages/*/vitest.config.ts', 'packages/providers/*/vitest.config.ts'],
     coverage: {
       provider: 'v8',
       include: ['apps/*/src/**', 'packages/*/src/**', 'packages/providers/*/src/**'],
