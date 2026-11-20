@@ -67,7 +67,9 @@ export function createHttpClient (options: HttpClientOptions = {}): HttpClient {
     const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeoutMs)
     const onCallerAbort = (): void => { controller.abort() }
     if (base.signal?.aborted) controller.abort()
-    base.signal?.addEventListener('abort', onCallerAbort, { once: true })
+    // Owned by the controller's own signal: once the controller aborts (deadline, failure or the
+    // caller), the listener is removed, so a long-lived caller signal does not collect listeners.
+    base.signal?.addEventListener('abort', onCallerAbort, { once: true, signal: controller.signal })
 
     let host: string | undefined
     try {

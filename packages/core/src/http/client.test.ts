@@ -112,6 +112,25 @@ describe('requestOnce', () => {
     expect(Date.now() - started).toBeLessThan(1_000)
   })
 
+  it('detaches from a long-lived caller signal once the deadline passes', async () => {
+    const caller = new AbortController()
+    const removed: unknown[] = []
+    const original = caller.signal.removeEventListener.bind(caller.signal)
+    let attached = 0
+    const add = caller.signal.addEventListener.bind(caller.signal)
+    caller.signal.addEventListener = ((type: string, fn: EventListener, opts?: AddEventListenerOptions) => {
+      attached++
+      opts?.signal?.addEventListener('abort', () => { removed.push(fn) }, { once: true })
+      add(type, fn, opts)
+    }) as typeof caller.signal.addEventListener
+    caller.signal.removeEventListener = original
+    const { fetch } = recordingFetch([new Response('ok')])
+    await createHttpClient({ fetch, resolver }).requestOnce('https://api.vendor.example/', { signal: caller.signal, timeoutMs: 10 })
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(attached).toBe(1)
+    expect(removed).toHaveLength(1)
+  })
+
   it('never retries, even on a network error or a 503', async () => {
     const fail = recordingFetch([new TypeError('reset')])
     await expect(createHttpClient({ fetch: fail.fetch, resolver }).requestOnce('https://api.vendor.example/', { method: 'POST' }))
