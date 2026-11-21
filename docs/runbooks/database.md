@@ -87,7 +87,9 @@ owner, with writes to the table paused (it takes an exclusive lock):
    the month partitions never skew the check.
 6. `DROP TABLE events_default_old;` and commit.
 7. Check the new default directly (partitions have no RLS of their own):
-   `SELECT min(recorded_at), max(recorded_at), count(*) FROM events_default;`. If it still holds
+   `SELECT min(recorded_at), max(recorded_at), count(*) FROM events_default;` (for
+   `webhook_deliveries`, the partition key is `created_at`:
+   `SELECT min(created_at), max(created_at), count(*) FROM webhook_deliveries_default;`). If it still holds
    rows (one call creates at most 36 months), repeat from step 1 for the remaining range. Resume
    routine maintenance only when both `events_default` and `webhook_deliveries_default` are empty.
 
