@@ -1,6 +1,6 @@
 {
-  "id": "e7b63bb9-8634-4d3d-8118-20f155ca1a7c",
-  "prevId": "0e803765-b7f7-4c02-a910-a029e0cc9f32",
+  "id": "89ecd476-5826-4d13-9690-919da25f353c",
+  "prevId": "d4f2d2c9-96a3-4344-a1b5-eb7d54b31785",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -196,66 +196,76 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "commands_site_id_sites_id_fk": {
-          "name": "commands_site_id_sites_id_fk",
+        "commands_site_fk": {
+          "name": "commands_site_fk",
           "tableFrom": "commands",
           "columnsFrom": [
+            "org_id",
             "site_id"
           ],
           "tableTo": "sites",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "commands_device_id_devices_id_fk": {
-          "name": "commands_device_id_devices_id_fk",
+        "commands_device_fk": {
+          "name": "commands_device_fk",
           "tableFrom": "commands",
           "columnsFrom": [
+            "org_id",
             "device_id"
           ],
           "tableTo": "devices",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "commands_subject_id_subjects_id_fk": {
-          "name": "commands_subject_id_subjects_id_fk",
+        "commands_subject_fk": {
+          "name": "commands_subject_fk",
           "tableFrom": "commands",
           "columnsFrom": [
+            "org_id",
             "subject_id"
           ],
           "tableTo": "subjects",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "commands_grant_id_grants_id_fk": {
-          "name": "commands_grant_id_grants_id_fk",
+        "commands_grant_fk": {
+          "name": "commands_grant_fk",
           "tableFrom": "commands",
           "columnsFrom": [
+            "org_id",
             "grant_id"
           ],
           "tableTo": "grants",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "commands_client_id_clients_id_fk": {
-          "name": "commands_client_id_clients_id_fk",
+        "commands_client_fk": {
+          "name": "commands_client_fk",
           "tableFrom": "commands",
           "columnsFrom": [
+            "org_id",
             "client_id"
           ],
           "tableTo": "clients",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -436,21 +446,6 @@
         }
       },
       "indexes": {
-        "grants_org_id_idx": {
-          "name": "grants_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "grants_subject_id_idx": {
           "name": "grants_subject_id_idx",
           "columns": [
@@ -526,79 +521,91 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "grants_site_id_sites_id_fk": {
-          "name": "grants_site_id_sites_id_fk",
+        "grants_site_fk": {
+          "name": "grants_site_fk",
           "tableFrom": "grants",
           "columnsFrom": [
+            "org_id",
             "site_id"
           ],
           "tableTo": "sites",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "grants_subject_id_subjects_id_fk": {
-          "name": "grants_subject_id_subjects_id_fk",
+        "grants_subject_fk": {
+          "name": "grants_subject_fk",
           "tableFrom": "grants",
           "columnsFrom": [
+            "org_id",
             "subject_id"
           ],
           "tableTo": "subjects",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "grants_device_id_devices_id_fk": {
-          "name": "grants_device_id_devices_id_fk",
+        "grants_device_fk": {
+          "name": "grants_device_fk",
           "tableFrom": "grants",
           "columnsFrom": [
+            "org_id",
             "device_id"
           ],
           "tableTo": "devices",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "grants_group_id_device_groups_id_fk": {
-          "name": "grants_group_id_device_groups_id_fk",
+        "grants_group_fk": {
+          "name": "grants_group_fk",
           "tableFrom": "grants",
           "columnsFrom": [
+            "org_id",
             "group_id"
           ],
           "tableTo": "device_groups",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "grants_created_by_client_id_clients_id_fk": {
-          "name": "grants_created_by_client_id_clients_id_fk",
+        "grants_parent_grant_fk": {
+          "name": "grants_parent_grant_fk",
           "tableFrom": "grants",
           "columnsFrom": [
-            "created_by_client_id"
-          ],
-          "tableTo": "clients",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
-        "grants_parent_grant_id_fk": {
-          "name": "grants_parent_grant_id_fk",
-          "tableFrom": "grants",
-          "columnsFrom": [
+            "org_id",
             "parent_grant_id"
           ],
           "tableTo": "grants",
           "columnsTo": [
+            "org_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "grants_created_by_client_fk": {
+          "name": "grants_created_by_client_fk",
+          "tableFrom": "grants",
+          "columnsFrom": [
+            "org_id",
+            "created_by_client_id"
+          ],
+          "tableTo": "clients",
+          "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -606,7 +613,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "grants_org_id_id_key": {
+          "name": "grants_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "grants_id_check": {
@@ -726,6 +742,14 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
+        "subjects_org_id_id_key": {
+          "name": "subjects_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
         "subjects_org_id_external_id_key": {
           "name": "subjects_org_id_external_id_key",
           "columns": [
@@ -868,21 +892,6 @@
           "where": "\"controllers\".\"archived_at\" IS NULL",
           "concurrently": false
         },
-        "controllers_org_id_idx": {
-          "name": "controllers_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "controllers_site_id_idx": {
           "name": "controllers_site_id_idx",
           "columns": [
@@ -913,19 +922,6 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "controllers_site_id_sites_id_fk": {
-          "name": "controllers_site_id_sites_id_fk",
-          "tableFrom": "controllers",
-          "columnsFrom": [
-            "site_id"
-          ],
-          "tableTo": "sites",
-          "columnsTo": [
-            "id"
-          ],
-          "onUpdate": "no action",
-          "onDelete": "no action"
-        },
         "controllers_provider_providers_code_fk": {
           "name": "controllers_provider_providers_code_fk",
           "tableFrom": "controllers",
@@ -938,10 +934,34 @@
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
+        },
+        "controllers_site_fk": {
+          "name": "controllers_site_fk",
+          "tableFrom": "controllers",
+          "columnsFrom": [
+            "org_id",
+            "site_id"
+          ],
+          "tableTo": "sites",
+          "columnsTo": [
+            "org_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "controllers_org_id_id_key": {
+          "name": "controllers_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "controllers_id_check": {
@@ -1008,21 +1028,6 @@
         }
       },
       "indexes": {
-        "device_groups_org_id_idx": {
-          "name": "device_groups_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "device_groups_site_id_idx": {
           "name": "device_groups_site_id_idx",
           "columns": [
@@ -1053,14 +1058,16 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "device_groups_site_id_sites_id_fk": {
-          "name": "device_groups_site_id_sites_id_fk",
+        "device_groups_site_fk": {
+          "name": "device_groups_site_fk",
           "tableFrom": "device_groups",
           "columnsFrom": [
+            "org_id",
             "site_id"
           ],
           "tableTo": "sites",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -1068,7 +1075,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "device_groups_org_id_id_key": {
+          "name": "device_groups_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "device_groups_id_check": {
@@ -1186,21 +1202,6 @@
         }
       },
       "indexes": {
-        "devices_org_id_idx": {
-          "name": "devices_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
         "devices_site_id_idx": {
           "name": "devices_site_id_idx",
           "columns": [
@@ -1246,40 +1247,46 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "devices_site_id_sites_id_fk": {
-          "name": "devices_site_id_sites_id_fk",
+        "devices_site_fk": {
+          "name": "devices_site_fk",
           "tableFrom": "devices",
           "columnsFrom": [
+            "org_id",
             "site_id"
           ],
           "tableTo": "sites",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "devices_controller_id_controllers_id_fk": {
-          "name": "devices_controller_id_controllers_id_fk",
+        "devices_controller_fk": {
+          "name": "devices_controller_fk",
           "tableFrom": "devices",
           "columnsFrom": [
+            "org_id",
             "controller_id"
           ],
           "tableTo": "controllers",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "devices_group_id_device_groups_id_fk": {
-          "name": "devices_group_id_device_groups_id_fk",
+        "devices_group_fk": {
+          "name": "devices_group_fk",
           "tableFrom": "devices",
           "columnsFrom": [
+            "org_id",
             "group_id"
           ],
           "tableTo": "device_groups",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -1293,6 +1300,14 @@
           "columns": [
             "controller_id",
             "channel"
+          ],
+          "nullsNotDistinct": false
+        },
+        "devices_org_id_id_key": {
+          "name": "devices_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
           ],
           "nullsNotDistinct": false
         }
@@ -1440,23 +1455,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "sites_org_id_idx": {
-          "name": "sites_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "sites_org_id_organisations_id_fk": {
           "name": "sites_org_id_organisations_id_fk",
@@ -1473,7 +1472,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "sites_org_id_id_key": {
+          "name": "sites_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "sites_id_check": {
@@ -1851,11 +1859,17 @@
         }
       },
       "indexes": {
-        "ingested_refs_org_id_idx": {
-          "name": "ingested_refs_org_id_idx",
+        "ingested_refs_org_id_controller_id_idx": {
+          "name": "ingested_refs_org_id_controller_id_idx",
           "columns": [
             {
               "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "controller_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1896,14 +1910,16 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "ingested_refs_controller_id_controllers_id_fk": {
-          "name": "ingested_refs_controller_id_controllers_id_fk",
+        "ingested_refs_controller_fk": {
+          "name": "ingested_refs_controller_fk",
           "tableFrom": "ingested_refs",
           "columnsFrom": [
+            "org_id",
             "controller_id"
           ],
           "tableTo": "controllers",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -1992,26 +2008,17 @@
         }
       },
       "indexes": {
-        "client_secrets_client_id_idx": {
-          "name": "client_secrets_client_id_idx",
-          "columns": [
-            {
-              "expression": "client_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        },
-        "client_secrets_org_id_idx": {
-          "name": "client_secrets_org_id_idx",
+        "client_secrets_org_id_client_id_idx": {
+          "name": "client_secrets_org_id_client_id_idx",
           "columns": [
             {
               "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2037,14 +2044,16 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "client_secrets_client_id_clients_id_fk": {
-          "name": "client_secrets_client_id_clients_id_fk",
+        "client_secrets_client_fk": {
+          "name": "client_secrets_client_fk",
           "tableFrom": "client_secrets",
           "columnsFrom": [
+            "org_id",
             "client_id"
           ],
           "tableTo": "clients",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -2127,23 +2136,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "clients_org_id_idx": {
-          "name": "clients_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "clients_org_id_organisations_id_fk": {
           "name": "clients_org_id_organisations_id_fk",
@@ -2160,7 +2153,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "clients_org_id_id_key": {
+          "name": "clients_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "clients_id_check": {
@@ -2227,11 +2229,17 @@
         }
       },
       "indexes": {
-        "idempotency_keys_org_id_idx": {
-          "name": "idempotency_keys_org_id_idx",
+        "idempotency_keys_org_id_client_id_idx": {
+          "name": "idempotency_keys_org_id_client_id_idx",
           "columns": [
             {
               "expression": "org_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "client_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2272,14 +2280,16 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "idempotency_keys_client_id_clients_id_fk": {
-          "name": "idempotency_keys_client_id_clients_id_fk",
+        "idempotency_keys_client_fk": {
+          "name": "idempotency_keys_client_fk",
           "tableFrom": "idempotency_keys",
           "columnsFrom": [
+            "org_id",
             "client_id"
           ],
           "tableTo": "clients",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -2680,14 +2690,16 @@
           "onUpdate": "no action",
           "onDelete": "no action"
         },
-        "webhook_deliveries_endpoint_id_webhook_endpoints_id_fk": {
-          "name": "webhook_deliveries_endpoint_id_webhook_endpoints_id_fk",
+        "webhook_deliveries_endpoint_fk": {
+          "name": "webhook_deliveries_endpoint_fk",
           "tableFrom": "webhook_deliveries",
           "columnsFrom": [
+            "org_id",
             "endpoint_id"
           ],
           "tableTo": "webhook_endpoints",
           "columnsTo": [
+            "org_id",
             "id"
           ],
           "onUpdate": "no action",
@@ -2795,23 +2807,7 @@
           "default": "now()"
         }
       },
-      "indexes": {
-        "webhook_endpoints_org_id_idx": {
-          "name": "webhook_endpoints_org_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "with": {},
-          "method": "btree",
-          "concurrently": false
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "webhook_endpoints_org_id_organisations_id_fk": {
           "name": "webhook_endpoints_org_id_organisations_id_fk",
@@ -2828,7 +2824,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "webhook_endpoints_org_id_id_key": {
+          "name": "webhook_endpoints_org_id_id_key",
+          "columns": [
+            "org_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "webhook_endpoints_id_check": {

@@ -4,8 +4,8 @@
 // Phase 2, and the billing columns on `organisations` (`plan`, `price_per_device_month`,
 // `billing_provider`) arrive with metering in Phase 3 (SPEC §0).
 import { sql } from 'drizzle-orm'
-import { bigint, boolean, check, foreignKey, index, jsonb, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core'
-import { jsonObject, oneOf, orgId, prefixedId, timestamps, tstz } from './columns.ts'
+import { bigint, boolean, check, foreignKey, index, jsonb, pgTable, primaryKey, text, unique, uuid } from 'drizzle-orm/pg-core'
+import { jsonObject, oneOf, orgId, prefixedId, sameOrg, timestamps, tstz } from './columns.ts'
 import { CLIENT_ENVS, CLIENT_STATUSES, MEMBER_ROLES, ORG_STATUSES, REGIONS } from './enums.ts'
 
 export const organisations = pgTable('organisations', {
@@ -42,7 +42,8 @@ export const clients = pgTable('clients', {
   check('clients_id_check', prefixedId(t.id, 'cli')),
   check('clients_env_check', oneOf(t.env, CLIENT_ENVS)),
   check('clients_status_check', oneOf(t.status, CLIENT_STATUSES)),
-  index('clients_org_id_idx').on(t.orgId),
+  // Target of same-org foreign keys (columns.ts sameOrg); also serves lookups by org.
+  unique('clients_org_id_id_key').on(t.orgId, t.id),
 ])
 
 // `org_id` is denormalised from the client so the table carries the same RLS policy as the
@@ -50,7 +51,7 @@ export const clients = pgTable('clients', {
 export const clientSecrets = pgTable('client_secrets', {
   id: uuid('id').primaryKey(),
   orgId: orgId().references(() => organisations.id),
-  clientId: text('client_id').notNull().references(() => clients.id),
+  clientId: text('client_id').notNull(),
   hash: text('hash').notNull(),
   salt: text('salt').notNull(),
   lastUsedAt: tstz('last_used_at'),
@@ -58,8 +59,8 @@ export const clientSecrets = pgTable('client_secrets', {
   expiresAt: tstz('expires_at'),
   ...timestamps,
 }, (t) => [
-  index('client_secrets_client_id_idx').on(t.clientId),
-  index('client_secrets_org_id_idx').on(t.orgId),
+  sameOrg('client_secrets_client_fk', t.orgId, t.clientId, clients.orgId, clients.id),
+  index('client_secrets_org_id_client_id_idx').on(t.orgId, t.clientId),
 ])
 
 // Console membership (SPEC §3.3). `user_id` is the Better Auth user id; its table and foreign key
@@ -79,7 +80,7 @@ export const orgMembers = pgTable('org_members', {
 // request is still being accepted (`409 idempotency_in_progress`).
 export const idempotencyKeys = pgTable('idempotency_keys', {
   orgId: orgId().references(() => organisations.id),
-  clientId: text('client_id').notNull().references(() => clients.id),
+  clientId: text('client_id').notNull(),
   key: text('key').notNull(),
   requestHash: text('request_hash').notNull(),
   response: jsonb('response').$type<Record<string, unknown>>(),
@@ -87,6 +88,7 @@ export const idempotencyKeys = pgTable('idempotency_keys', {
   createdAt: tstz('created_at').notNull().defaultNow(),
 }, (t) => [
   primaryKey({ columns: [t.clientId, t.key], name: 'idempotency_keys_pkey' }),
-  index('idempotency_keys_org_id_idx').on(t.orgId),
+  sameOrg('idempotency_keys_client_fk', t.orgId, t.clientId, clients.orgId, clients.id),
+  index('idempotency_keys_org_id_client_id_idx').on(t.orgId, t.clientId),
   index('idempotency_keys_expires_at_idx').on(t.expiresAt),
 ])

@@ -41,6 +41,7 @@ export async function seedOrg (db: Db): Promise<SeededOrg> {
   const grantId = testId('grt')
   const commandId = testId('cmd')
   const now = new Date()
+  const eventRecordedAt = recordedAtFromId(ids.eventId)
 
   await withOrg(db, orgId, async ({ tx }) => {
     await tx.insert(s.organisations).values({ id: orgId, name: 'Test org', region: 'za' })
@@ -68,11 +69,11 @@ export async function seedOrg (db: Db): Promise<SeededOrg> {
       requestedAt: now,
       idempotencyKey: randomUUID(),
     })
-    await tx.insert(s.events).values({ id: ids.eventId, orgId, type: 'command.requested', occurredAt: now, recordedAt: recordedAtFromId(ids.eventId), commandId })
+    await tx.insert(s.events).values({ id: ids.eventId, orgId, type: 'command.requested', occurredAt: now, recordedAt: eventRecordedAt, commandId })
     await tx.insert(s.ingestedRefs).values({ orgId, controllerId: ids.controllerId, providerEventRef: 'ref-1', eventId: ids.eventId, recordedAt: now })
     await tx.insert(s.auditLog).values({ id: randomUUID(), orgId, actorType: 'client', actorId: ids.clientId, action: 'test.seed' })
     await tx.insert(s.webhookEndpoints).values({ id: ids.endpointId, orgId, url: 'https://hooks.example.com/x', secretHash: 'h', eventTypes: ['command.requested'] })
-    await tx.insert(s.webhookDeliveries).values({ id: randomUUID(), orgId, endpointId: ids.endpointId, eventId: ids.eventId, eventRecordedAt: now })
+    await tx.insert(s.webhookDeliveries).values({ id: randomUUID(), orgId, endpointId: ids.endpointId, eventId: ids.eventId, eventRecordedAt })
   })
   return ids
 }

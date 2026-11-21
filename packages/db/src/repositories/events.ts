@@ -59,6 +59,12 @@ export function recordedAtFromId (id: string): Date {
   return new Date(ms)
 }
 
+/** `?limit=` per SPEC §1: default 50, between 1 and 200. Anything not a finite number is the default. */
+export function clampLimit (limit: number | undefined): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_LIMIT
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT)
+}
+
 export async function insertEvent (scope: OrgScope, event: NewEvent): Promise<EventRow> {
   const [row] = await scope.tx.insert(events).values({
     ...event,
@@ -69,7 +75,7 @@ export async function insertEvent (scope: OrgScope, event: NewEvent): Promise<Ev
 }
 
 export async function listEvents (scope: OrgScope, query: ListEventsQuery = {}): Promise<Page<EventRow>> {
-  const limit = Math.min(Math.max(Math.trunc(query.limit ?? DEFAULT_LIMIT), 1), MAX_LIMIT)
+  const limit = clampLimit(query.limit)
   const where: (SQL | undefined)[] = [eq(events.orgId, scope.orgId)]
   if (query.cursor) {
     const c = decodeEventCursor(query.cursor)

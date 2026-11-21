@@ -9,7 +9,7 @@
 // mentions (commands are deleted after 90 days, SPEC §14).
 import { sql } from 'drizzle-orm'
 import { check, index, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core'
-import { jsonObject, oneOf, orgId, prefixedId, tstz } from './columns.ts'
+import { jsonObject, oneOf, orgId, prefixedId, sameOrg, tstz } from './columns.ts'
 import { AUDIT_ACTOR_TYPES, EVENT_METHODS, EVENT_RESULTS } from './enums.ts'
 import { controllers } from './inventory.ts'
 import { organisations } from './tenancy.ts'
@@ -46,13 +46,14 @@ export const events = pgTable('events', {
 // `org_id` is denormalised from the controller for RLS (Thomas, issue #5).
 export const ingestedRefs = pgTable('ingested_refs', {
   orgId: orgId().references(() => organisations.id),
-  controllerId: text('controller_id').notNull().references(() => controllers.id),
+  controllerId: text('controller_id').notNull(),
   providerEventRef: text('provider_event_ref').notNull(),
   eventId: text('event_id').notNull(),
   recordedAt: tstz('recorded_at').notNull(),
 }, (t) => [
   primaryKey({ columns: [t.controllerId, t.providerEventRef], name: 'ingested_refs_pkey' }),
-  index('ingested_refs_org_id_idx').on(t.orgId),
+  sameOrg('ingested_refs_controller_fk', t.orgId, t.controllerId, controllers.orgId, controllers.id),
+  index('ingested_refs_org_id_controller_id_idx').on(t.orgId, t.controllerId),
   index('ingested_refs_recorded_at_idx').on(t.recordedAt),
 ])
 

@@ -156,6 +156,31 @@ describe('constraints that span organisations', () => {
     await expect(claim(b.orgId, b.siteId)).resolves.toBeDefined()
   })
 
+  it('refuses references to another organisation\'s rows, without revealing whether they exist', async () => {
+    const asA = (work: (tx: Parameters<Parameters<typeof withOrg>[2]>[0]['tx']) => Promise<unknown>) => withOrg(db, a.orgId, ({ tx }) => work(tx))
+    expect(await dbError(asA((tx) => tx.insert(s.devices).values({ id: testId('dev'), orgId: a.orgId, siteId: a.siteId, controllerId: b.controllerId, channel: 'x', name: 'x' })))).toMatch(/devices_controller_fk/)
+    expect(await dbError(asA((tx) => tx.insert(s.devices).values({ id: testId('dev'), orgId: a.orgId, siteId: a.siteId, controllerId: testId('ctl'), channel: 'x', name: 'x' })))).toMatch(/devices_controller_fk/)
+    expect(await dbError(asA((tx) => tx.insert(s.idempotencyKeys).values({ orgId: a.orgId, clientId: b.clientId, key: randomUUID(), requestHash: 'r', expiresAt: new Date() })))).toMatch(/idempotency_keys_client_fk/)
+    expect(await dbError(asA((tx) => tx.insert(s.clientSecrets).values({ id: randomUUID(), orgId: a.orgId, clientId: b.clientId, hash: 'h', salt: 's' })))).toMatch(/client_secrets_client_fk/)
+    expect(await dbError(asA((tx) => tx.insert(s.sites).values({ id: testId('site'), orgId: a.orgId, name: 'x', timezone: 'UTC' }).then(() =>
+      tx.insert(s.commands).values({ id: testId('cmd'), orgId: a.orgId, siteId: a.siteId, deviceId: b.deviceId, action: 'trigger', state: 'queued', verificationLevel: 'none', requestedAt: new Date() }))))).toMatch(/commands_device_fk/)
+    expect(await dbError(asA((tx) => tx.insert(s.webhookDeliveries).values({ id: randomUUID(), orgId: a.orgId, endpointId: b.endpointId, eventId: a.eventId, eventRecordedAt: new Date() })))).toMatch(/webhook_deliveries_endpoint_fk/)
+  })
+
+  it('checks every reference between org-scoped tables against the same organisation', async () => {
+    // Every foreign key from an org-scoped table to another org-scoped table includes org_id.
+    const rows = await owner<{ conname: string }[]>`
+      SELECT c.conname FROM pg_constraint c
+      JOIN pg_class f ON f.oid = c.confrelid
+      WHERE c.contype = 'f' AND c.connamespace = 'public'::regnamespace
+        AND f.relname NOT IN ('organisations', 'providers')
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest(c.conkey) k JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k
+          WHERE a.attname = 'org_id')
+        AND NOT c.conparentid <> 0`
+    expect(rows.map((r) => r.conname)).toEqual([])
+  })
+
   it('rejects a grant with both or neither of device and group', async () => {
     expect(await dbError(withOrg(db, a.orgId, async ({ tx }) => {
       const [sub] = await tx.select({ id: s.subjects.id }).from(s.subjects)

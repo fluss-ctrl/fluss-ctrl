@@ -23,13 +23,30 @@ describe('event cursors', () => {
     }))
   })
 
-  it('reject anything else with InvalidCursorError and nothing else', () => {
+  it('reject strings outside the base64url alphabet', () => {
+    const bad = fc.string({ minLength: 1 }).filter((s) => /[^A-Za-z0-9_-]/.test(s))
+    fc.assert(fc.property(bad, (s) => {
+      expect(() => decodeEventCursor(s)).toThrow(InvalidCursorError)
+    }))
+  })
+
+  it('reject any encoded JSON that is not a cursor', () => {
+    const notCursor = fc.jsonValue().filter((v) => {
+      const o = v as Record<string, unknown> | null
+      return typeof o !== 'object' || o === null || typeof o.r !== 'string' || typeof o.i !== 'string'
+    })
+    fc.assert(fc.property(notCursor, (v) => {
+      expect(() => decodeEventCursor(Buffer.from(JSON.stringify(v)).toString('base64url'))).toThrow(InvalidCursorError)
+    }))
+  })
+
+  it('throw nothing but InvalidCursorError for arbitrary input', () => {
     fc.assert(fc.property(fc.string(), (s) => {
-      try {
-        decodeEventCursor(s)
-      } catch (err) {
-        expect(err).toBeInstanceOf(InvalidCursorError)
-      }
+      let thrown: unknown
+      try { decodeEventCursor(s) } catch (err) { thrown = err }
+      // An arbitrary string almost never decodes; when it does it must round-trip.
+      if (thrown === undefined) expect(encodeEventCursor(decodeEventCursor(s))).toBe(s)
+      else expect(thrown).toBeInstanceOf(InvalidCursorError)
     }))
   })
 

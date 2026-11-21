@@ -5,8 +5,8 @@
 // `event_recorded_at` instead of a foreign key into the partitioned `events` table, so a lookup of
 // its event still prunes to one partition. `org_id` is denormalised for RLS (Thomas, issue #5).
 import { sql } from 'drizzle-orm'
-import { bigint, check, index, pgTable, primaryKey, text, uuid } from 'drizzle-orm/pg-core'
-import { oneOf, orgId, prefixedId, timestamps, tstz } from './columns.ts'
+import { bigint, check, index, pgTable, primaryKey, text, unique, uuid } from 'drizzle-orm/pg-core'
+import { oneOf, orgId, prefixedId, sameOrg, timestamps, tstz } from './columns.ts'
 import { WEBHOOK_DELIVERY_STATUSES, WEBHOOK_ENDPOINT_STATUSES } from './enums.ts'
 import { organisations } from './tenancy.ts'
 
@@ -25,13 +25,13 @@ export const webhookEndpoints = pgTable('webhook_endpoints', {
 }, (t) => [
   check('webhook_endpoints_id_check', prefixedId(t.id, 'whk')),
   check('webhook_endpoints_status_check', oneOf(t.status, WEBHOOK_ENDPOINT_STATUSES)),
-  index('webhook_endpoints_org_id_idx').on(t.orgId),
+  unique('webhook_endpoints_org_id_id_key').on(t.orgId, t.id),
 ])
 
 export const webhookDeliveries = pgTable('webhook_deliveries', {
   id: uuid('id').notNull(),
   orgId: orgId().references(() => organisations.id),
-  endpointId: text('endpoint_id').notNull().references(() => webhookEndpoints.id),
+  endpointId: text('endpoint_id').notNull(),
   eventId: text('event_id').notNull(),
   eventRecordedAt: tstz('event_recorded_at').notNull(),
   attempt: bigint('attempt', { mode: 'number' }).notNull().default(0),
@@ -45,6 +45,7 @@ export const webhookDeliveries = pgTable('webhook_deliveries', {
   primaryKey({ columns: [t.id, t.createdAt], name: 'webhook_deliveries_pkey' }),
   check('webhook_deliveries_status_check', oneOf(t.status, WEBHOOK_DELIVERY_STATUSES)),
   index('webhook_deliveries_org_id_created_at_idx').on(t.orgId, t.createdAt.desc()),
+  sameOrg('webhook_deliveries_endpoint_fk', t.orgId, t.endpointId, webhookEndpoints.orgId, webhookEndpoints.id),
   index('webhook_deliveries_endpoint_id_idx').on(t.endpointId),
   index('webhook_deliveries_event_id_idx').on(t.eventId),
   index('webhook_deliveries_pending_idx').on(t.nextAttemptAt).where(sql`${t.status} = 'pending'`),

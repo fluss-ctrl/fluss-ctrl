@@ -22,22 +22,54 @@ Hyperdrive (SPEC §5).
 
 ### Provision the roles
 
-1. The owner role (Neon's project owner, or a role with CREATEROLE) runs the migrations. They
-   create `fluss_app` (NOLOGIN, no BYPASSRLS) if it is missing.
-2. Create the login role Hyperdrive uses and make it a member of `fluss_app` only:
+1. The migration role must own the `public` schema objects it creates: on Neon, the project owner
+   role; elsewhere, a role with CREATEROLE **and** CREATE on `public` (for example the database
+   owner). Check before migrating:
+   `SELECT has_schema_privilege(current_user, 'public', 'CREATE'), rolcreaterole FROM pg_roles WHERE rolname = current_user;`
+   is `t, t`.
+2. Run the migrations as that role. They create `fluss_app` (NOLOGIN, no BYPASSRLS) if missing and
+   leave an existing one unchanged, so check it before granting anything:
+   `SELECT rolsuper, rolbypassrls, rolcanlogin FROM pg_roles WHERE rolname = 'fluss_app';` is
+   `f, f, f`, and
+   `SELECT r.rolname FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid WHERE m.member = 'fluss_app'::regrole;`
+   returns no rows (it is a member of nothing it could `SET ROLE` to).
+3. Create the login role Hyperdrive uses and make it a member of `fluss_app` only:
    `CREATE ROLE <login> LOGIN PASSWORD '<from the secret store>' IN ROLE fluss_app;`
-   Check: `SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = '<login>';` is `f, f`.
-3. Point the Hyperdrive binding (query caching off, SPEC §9) at that login role.
+   Check: `SELECT rolbypassrls, rolsuper FROM pg_roles WHERE rolname = '<login>';` is `f, f`, and
+   the membership query above with `'<login>'::regrole` returns only `fluss_app`.
+4. Point the Hyperdrive binding (query caching off, SPEC §9) at that login role.
 
 ### Keep partitions ahead
 
-1. Create the next months: `SELECT create_month_partitions('events', '<first day>', 3);` and the
-   same for `webhook_deliveries`. It skips months that exist.
-2. Check: `SELECT count(*) FROM events_default;` is 0. If not, the rows must be moved (detach the
-   default partition, create the month, re-insert) before the month can be created: write that
-   procedure the first time it happens.
+Run these as the migration (owner) role over a direct connection, never through Hyperdrive: the API
+role cannot execute `create_month_partitions` or see partitions.
 
-A scheduled job to run step 1 monthly arrives with its own issue; until then this is a calendar
+1. Check both default partitions are empty first:
+   `SELECT count(*) FROM events_default;` and `SELECT count(*) FROM webhook_deliveries_default;`
+   are both 0. If either is not, stop and follow "Rows in a default partition" below.
+2. Create the next months: `SELECT create_month_partitions('events', '<first day>', 3);` and
+   `SELECT create_month_partitions('webhook_deliveries', '<first day>', 3);`. Months that exist are
+   skipped.
+3. Check: `SELECT relname FROM pg_class WHERE relname LIKE 'events_y%' AND relkind = 'r' ORDER BY 1 DESC LIMIT 3;`
+   shows the new months, and likewise for `webhook_deliveries_y%`.
+
+### Rows in a default partition
+
+Creating a month fails while the default partition holds rows for it. In one transaction, as the
+owner, with writes to the table paused (it takes an exclusive lock):
+
+1. `ALTER TABLE events DETACH PARTITION events_default;`
+2. `ALTER TABLE events_default RENAME TO events_default_old;`
+3. `CREATE TABLE events_default PARTITION OF events DEFAULT;` (out-of-range rows have a home again)
+4. `SELECT create_month_partitions('events', '<first affected month>', <months>);`
+5. `INSERT INTO events SELECT * FROM events_default_old;` (each row lands in its month, or in the new
+   default if still out of range)
+6. Check the row counts match, then `DROP TABLE events_default_old;` and commit.
+
+The same applies to `webhook_deliveries`. Rehearse it on a Neon branch first; record it in the
+release issue.
+
+A scheduled job to keep partitions ahead arrives with its own issue; until then this is a calendar
 reminder well before January 2028.
 
 ## Rollback

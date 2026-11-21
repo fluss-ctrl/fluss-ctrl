@@ -37,6 +37,11 @@ forced. The API connects as a member of `fluss_app`: no BYPASSRLS, DML only wher
 append-only on `events` and `audit_log`, no privilege on partitions. A catalogue test fails if a
 table without the policy, or a partition the API can reach, ever appears.
 
+Foreign-key checks run without row security, so every reference between org-scoped tables is a
+composite key `(org_id, <column>)` → `(org_id, id)`: org A cannot point a row at org B's client,
+device or endpoint, and the error does not reveal whether B's row exists. A second catalogue test
+fails on any foreign key between org-scoped tables that leaves `org_id` out.
+
 Cross-org work (token lookup before the org is known, the outbox sweep, retention and
 reconciliation crons) gets narrow `SECURITY DEFINER` functions, added by the issue that needs each
 one, rather than a bypass role.

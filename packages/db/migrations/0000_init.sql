@@ -57,6 +57,7 @@ CREATE TABLE "grants" (
 	"created_by_client_id" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "grants_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "grants_id_check" CHECK ("grants"."id" ~ '^grt_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "grants_type_check" CHECK ("grants"."type" IN ('full_access', 'permanent', 'time_window', 'recurring', 'count_limited', 'tenant_access')),
 	CONSTRAINT "grants_status_check" CHECK ("grants"."status" IN ('active', 'scheduled', 'expired', 'exhausted', 'revoked')),
@@ -77,6 +78,7 @@ CREATE TABLE "subjects" (
 	"erased_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "subjects_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "subjects_org_id_external_id_key" UNIQUE("org_id","external_id"),
 	CONSTRAINT "subjects_id_check" CHECK ("subjects"."id" ~ '^sub_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 );
@@ -97,6 +99,7 @@ CREATE TABLE "controllers" (
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "controllers_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "controllers_id_check" CHECK ("controllers"."id" ~ '^ctl_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 );
 --> statement-breakpoint
@@ -109,6 +112,7 @@ CREATE TABLE "device_groups" (
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "device_groups_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "device_groups_id_check" CHECK ("device_groups"."id" ~ '^grp_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 );
 --> statement-breakpoint
@@ -130,6 +134,7 @@ CREATE TABLE "devices" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "devices_controller_id_channel_key" UNIQUE("controller_id","channel"),
+	CONSTRAINT "devices_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "devices_id_check" CHECK ("devices"."id" ~ '^dev_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "devices_channel_role_check" CHECK ("devices"."channel_role" IN ('main', 'pedestrian', 'switch', 'other')),
 	CONSTRAINT "devices_kind_check" CHECK ("devices"."kind" IN ('gate', 'boom', 'door', 'garage', 'turnstile', 'pedestrian_gate', 'other'))
@@ -156,6 +161,7 @@ CREATE TABLE "sites" (
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "sites_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "sites_id_check" CHECK ("sites"."id" ~ '^site_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 );
 --> statement-breakpoint
@@ -227,6 +233,7 @@ CREATE TABLE "clients" (
 	"allow_anonymous_commands" boolean DEFAULT false NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "clients_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "clients_id_check" CHECK ("clients"."id" ~ '^cli_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "clients_env_check" CHECK ("clients"."env" IN ('live', 'sandbox')),
 	CONSTRAINT "clients_status_check" CHECK ("clients"."status" IN ('active', 'disabled'))
@@ -303,79 +310,72 @@ CREATE TABLE "webhook_endpoints" (
 	"description" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "webhook_endpoints_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "webhook_endpoints_id_check" CHECK ("webhook_endpoints"."id" ~ '^whk_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "webhook_endpoints_status_check" CHECK ("webhook_endpoints"."status" IN ('active', 'disabled'))
 );
 --> statement-breakpoint
 ALTER TABLE "commands" ADD CONSTRAINT "commands_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "commands" ADD CONSTRAINT "commands_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "commands" ADD CONSTRAINT "commands_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "public"."devices"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "commands" ADD CONSTRAINT "commands_subject_id_subjects_id_fk" FOREIGN KEY ("subject_id") REFERENCES "public"."subjects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "commands" ADD CONSTRAINT "commands_grant_id_grants_id_fk" FOREIGN KEY ("grant_id") REFERENCES "public"."grants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "commands" ADD CONSTRAINT "commands_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "commands" ADD CONSTRAINT "commands_site_fk" FOREIGN KEY ("org_id","site_id") REFERENCES "public"."sites"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "commands" ADD CONSTRAINT "commands_device_fk" FOREIGN KEY ("org_id","device_id") REFERENCES "public"."devices"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "commands" ADD CONSTRAINT "commands_subject_fk" FOREIGN KEY ("org_id","subject_id") REFERENCES "public"."subjects"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "commands" ADD CONSTRAINT "commands_grant_fk" FOREIGN KEY ("org_id","grant_id") REFERENCES "public"."grants"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "commands" ADD CONSTRAINT "commands_client_fk" FOREIGN KEY ("org_id","client_id") REFERENCES "public"."clients"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "grants" ADD CONSTRAINT "grants_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_subject_id_subjects_id_fk" FOREIGN KEY ("subject_id") REFERENCES "public"."subjects"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_device_id_devices_id_fk" FOREIGN KEY ("device_id") REFERENCES "public"."devices"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_group_id_device_groups_id_fk" FOREIGN KEY ("group_id") REFERENCES "public"."device_groups"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_created_by_client_id_clients_id_fk" FOREIGN KEY ("created_by_client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "grants" ADD CONSTRAINT "grants_parent_grant_id_fk" FOREIGN KEY ("parent_grant_id") REFERENCES "public"."grants"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_site_fk" FOREIGN KEY ("org_id","site_id") REFERENCES "public"."sites"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_subject_fk" FOREIGN KEY ("org_id","subject_id") REFERENCES "public"."subjects"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_device_fk" FOREIGN KEY ("org_id","device_id") REFERENCES "public"."devices"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_group_fk" FOREIGN KEY ("org_id","group_id") REFERENCES "public"."device_groups"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_parent_grant_fk" FOREIGN KEY ("org_id","parent_grant_id") REFERENCES "public"."grants"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "grants" ADD CONSTRAINT "grants_created_by_client_fk" FOREIGN KEY ("org_id","created_by_client_id") REFERENCES "public"."clients"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "subjects" ADD CONSTRAINT "subjects_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "controllers" ADD CONSTRAINT "controllers_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "controllers" ADD CONSTRAINT "controllers_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "controllers" ADD CONSTRAINT "controllers_provider_providers_code_fk" FOREIGN KEY ("provider") REFERENCES "public"."providers"("code") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "controllers" ADD CONSTRAINT "controllers_site_fk" FOREIGN KEY ("org_id","site_id") REFERENCES "public"."sites"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "device_groups" ADD CONSTRAINT "device_groups_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "device_groups" ADD CONSTRAINT "device_groups_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "device_groups" ADD CONSTRAINT "device_groups_site_fk" FOREIGN KEY ("org_id","site_id") REFERENCES "public"."sites"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "devices" ADD CONSTRAINT "devices_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "devices" ADD CONSTRAINT "devices_site_id_sites_id_fk" FOREIGN KEY ("site_id") REFERENCES "public"."sites"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "devices" ADD CONSTRAINT "devices_controller_id_controllers_id_fk" FOREIGN KEY ("controller_id") REFERENCES "public"."controllers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "devices" ADD CONSTRAINT "devices_group_id_device_groups_id_fk" FOREIGN KEY ("group_id") REFERENCES "public"."device_groups"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "devices" ADD CONSTRAINT "devices_site_fk" FOREIGN KEY ("org_id","site_id") REFERENCES "public"."sites"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "devices" ADD CONSTRAINT "devices_controller_fk" FOREIGN KEY ("org_id","controller_id") REFERENCES "public"."controllers"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "devices" ADD CONSTRAINT "devices_group_fk" FOREIGN KEY ("org_id","group_id") REFERENCES "public"."device_groups"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sites" ADD CONSTRAINT "sites_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "audit_log" ADD CONSTRAINT "audit_log_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "events" ADD CONSTRAINT "events_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ingested_refs" ADD CONSTRAINT "ingested_refs_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "ingested_refs" ADD CONSTRAINT "ingested_refs_controller_id_controllers_id_fk" FOREIGN KEY ("controller_id") REFERENCES "public"."controllers"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "ingested_refs" ADD CONSTRAINT "ingested_refs_controller_fk" FOREIGN KEY ("org_id","controller_id") REFERENCES "public"."controllers"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "client_secrets" ADD CONSTRAINT "client_secrets_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "client_secrets" ADD CONSTRAINT "client_secrets_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "client_secrets" ADD CONSTRAINT "client_secrets_client_fk" FOREIGN KEY ("org_id","client_id") REFERENCES "public"."clients"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "clients" ADD CONSTRAINT "clients_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "idempotency_keys" ADD CONSTRAINT "idempotency_keys_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "idempotency_keys" ADD CONSTRAINT "idempotency_keys_client_id_clients_id_fk" FOREIGN KEY ("client_id") REFERENCES "public"."clients"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "idempotency_keys" ADD CONSTRAINT "idempotency_keys_client_fk" FOREIGN KEY ("org_id","client_id") REFERENCES "public"."clients"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "org_members" ADD CONSTRAINT "org_members_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "organisations" ADD CONSTRAINT "organisations_sandbox_of_fk" FOREIGN KEY ("sandbox_of") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "webhook_deliveries" ADD CONSTRAINT "webhook_deliveries_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "webhook_deliveries" ADD CONSTRAINT "webhook_deliveries_endpoint_id_webhook_endpoints_id_fk" FOREIGN KEY ("endpoint_id") REFERENCES "public"."webhook_endpoints"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "webhook_deliveries" ADD CONSTRAINT "webhook_deliveries_endpoint_fk" FOREIGN KEY ("org_id","endpoint_id") REFERENCES "public"."webhook_endpoints"("org_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "webhook_endpoints" ADD CONSTRAINT "webhook_endpoints_org_id_organisations_id_fk" FOREIGN KEY ("org_id") REFERENCES "public"."organisations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "commands_org_id_requested_at_idx" ON "commands" USING btree ("org_id","requested_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "commands_device_id_requested_at_idx" ON "commands" USING btree ("device_id","requested_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE INDEX "grants_org_id_idx" ON "grants" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "grants_subject_id_idx" ON "grants" USING btree ("subject_id");--> statement-breakpoint
 CREATE INDEX "grants_device_id_idx" ON "grants" USING btree ("device_id");--> statement-breakpoint
 CREATE INDEX "grants_group_id_idx" ON "grants" USING btree ("group_id");--> statement-breakpoint
 CREATE INDEX "grants_parent_grant_id_idx" ON "grants" USING btree ("parent_grant_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "controllers_provider_ref_live_key" ON "controllers" USING btree ("provider","provider_ref") WHERE "controllers"."archived_at" IS NULL;--> statement-breakpoint
-CREATE INDEX "controllers_org_id_idx" ON "controllers" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "controllers_site_id_idx" ON "controllers" USING btree ("site_id");--> statement-breakpoint
-CREATE INDEX "device_groups_org_id_idx" ON "device_groups" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "device_groups_site_id_idx" ON "device_groups" USING btree ("site_id");--> statement-breakpoint
-CREATE INDEX "devices_org_id_idx" ON "devices" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "devices_site_id_idx" ON "devices" USING btree ("site_id");--> statement-breakpoint
 CREATE INDEX "devices_group_id_idx" ON "devices" USING btree ("group_id");--> statement-breakpoint
-CREATE INDEX "sites_org_id_idx" ON "sites" USING btree ("org_id");--> statement-breakpoint
 CREATE INDEX "audit_log_org_id_at_idx" ON "audit_log" USING btree ("org_id","at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_org_id_recorded_at_idx" ON "events" USING btree ("org_id","recorded_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_device_id_recorded_at_idx" ON "events" USING btree ("device_id","recorded_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_subject_id_recorded_at_idx" ON "events" USING btree ("subject_id","recorded_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_org_id_occurred_at_idx" ON "events" USING btree ("org_id","occurred_at");--> statement-breakpoint
-CREATE INDEX "ingested_refs_org_id_idx" ON "ingested_refs" USING btree ("org_id");--> statement-breakpoint
+CREATE INDEX "ingested_refs_org_id_controller_id_idx" ON "ingested_refs" USING btree ("org_id","controller_id");--> statement-breakpoint
 CREATE INDEX "ingested_refs_recorded_at_idx" ON "ingested_refs" USING btree ("recorded_at");--> statement-breakpoint
-CREATE INDEX "client_secrets_client_id_idx" ON "client_secrets" USING btree ("client_id");--> statement-breakpoint
-CREATE INDEX "client_secrets_org_id_idx" ON "client_secrets" USING btree ("org_id");--> statement-breakpoint
-CREATE INDEX "clients_org_id_idx" ON "clients" USING btree ("org_id");--> statement-breakpoint
-CREATE INDEX "idempotency_keys_org_id_idx" ON "idempotency_keys" USING btree ("org_id");--> statement-breakpoint
+CREATE INDEX "client_secrets_org_id_client_id_idx" ON "client_secrets" USING btree ("org_id","client_id");--> statement-breakpoint
+CREATE INDEX "idempotency_keys_org_id_client_id_idx" ON "idempotency_keys" USING btree ("org_id","client_id");--> statement-breakpoint
 CREATE INDEX "idempotency_keys_expires_at_idx" ON "idempotency_keys" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "org_members_user_id_idx" ON "org_members" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "webhook_deliveries_org_id_created_at_idx" ON "webhook_deliveries" USING btree ("org_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "webhook_deliveries_endpoint_id_idx" ON "webhook_deliveries" USING btree ("endpoint_id");--> statement-breakpoint
 CREATE INDEX "webhook_deliveries_event_id_idx" ON "webhook_deliveries" USING btree ("event_id");--> statement-breakpoint
-CREATE INDEX "webhook_deliveries_pending_idx" ON "webhook_deliveries" USING btree ("next_attempt_at") WHERE "webhook_deliveries"."status" = 'pending';--> statement-breakpoint
-CREATE INDEX "webhook_endpoints_org_id_idx" ON "webhook_endpoints" USING btree ("org_id");
+CREATE INDEX "webhook_deliveries_pending_idx" ON "webhook_deliveries" USING btree ("next_attempt_at") WHERE "webhook_deliveries"."status" = 'pending';

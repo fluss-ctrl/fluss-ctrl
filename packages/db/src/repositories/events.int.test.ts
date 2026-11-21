@@ -76,13 +76,20 @@ describe('listEvents', () => {
   })
 
   it('filters on occurred_at without changing the order', async () => {
-    const rows = await walk(a.orgId, 2, { occurredSince: new Date(base - 2 * DAY), occurredUntil: new Date(base + 1) })
+    // The seeded event uses the wall clock, so select the fixtures by type.
+    const rows = await walk(a.orgId, 2, { type: 'access.granted', occurredSince: new Date(base - 2 * DAY), occurredUntil: new Date(base + 1) })
     expect(rows.map((r) => r.occurredAt.getTime())).toEqual([base, base - DAY, base - 2 * DAY])
   })
 
   it('filters on recorded_at and device', async () => {
-    const rows = await walk(a.orgId, 2, { since: new Date(base), until: new Date(base + 30 * DAY), deviceId: a.deviceId })
+    const rows = await walk(a.orgId, 2, { type: 'access.granted', since: new Date(base), until: new Date(base + 30 * DAY), deviceId: a.deviceId })
     expect(rows).toHaveLength(3)
+  })
+
+  it('treats a non-finite limit as the default, never as no limit', async () => {
+    const page = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: Number.NaN }))
+    expect(page.data).toHaveLength(8)
+    expect(page.nextCursor).toBeNull()
   })
 
   it('returns a null cursor on the last page and rejects a forged one', async () => {
@@ -92,7 +99,10 @@ describe('listEvents', () => {
   })
 
   it('never shows another organisation, even with its cursor', async () => {
-    const bPage = await withOrg(db, b.orgId, (scope) => listEvents(scope, { limit: 1 }))
+    const aPage = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: 1 }))
+    expect(aPage.nextCursor).not.toBeNull()
+    const bPage = await withOrg(db, b.orgId, (scope) => listEvents(scope, { limit: 200, cursor: aPage.nextCursor }))
+    expect(bPage.data.length).toBeGreaterThan(0)
     expect(bPage.data.every((r) => r.orgId === b.orgId)).toBe(true)
     const rows = await walk(b.orgId, 1)
     expect(rows.map((r) => r.type).sort()).toEqual(['access.denied', 'command.requested'])
