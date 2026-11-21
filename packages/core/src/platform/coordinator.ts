@@ -50,13 +50,13 @@ export interface CoordinatorSnapshot {
 }
 
 /** A handle on one device's coordinator. Phase 1 adds command submission. */
-export interface DeviceCoordinator {
+export interface DeviceCoordinatorHandle {
   snapshot(): Promise<CoordinatorSnapshot>
 }
 
 /** The port: resolves the coordinator for a device. */
 export interface Coordinator {
-  device(deviceId: Id<'dev'>): DeviceCoordinator
+  device(deviceId: Id<'dev'>): DeviceCoordinatorHandle
 }
 
 /** A coordinator was addressed with a different device id from the one it stored. */

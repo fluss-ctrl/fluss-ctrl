@@ -69,7 +69,7 @@ describe('takeTokens', () => {
         }
         const budget = capacity + ((now - T0) / 1000) * refillPerSecond
         expect(taken).toBeLessThanOrEqual(budget + 1e-9)
-      },
+      }
     ))
   })
 })

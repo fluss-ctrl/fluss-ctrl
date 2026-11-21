@@ -48,7 +48,7 @@ export function takeTokens (
   state: TokenBucketState | undefined,
   policy: TokenBucketPolicy,
   cost: number,
-  nowMs: number,
+  nowMs: number
 ): { state: TokenBucketState, decision: RateLimitDecision } {
   assertTokenBucketPolicy(policy)
   if (!Number.isFinite(cost) || cost <= 0 || cost > policy.capacity) throw new RangeError('cost must be positive and at most the capacity')
