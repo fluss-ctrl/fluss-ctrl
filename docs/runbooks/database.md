@@ -62,11 +62,28 @@ owner, with writes to the table paused (it takes an exclusive lock):
 2. `ALTER TABLE events_default RENAME TO events_default_old;`
 3. `CREATE TABLE events_default PARTITION OF events DEFAULT;` (out-of-range rows have a home again)
 4. `SELECT create_month_partitions('events', '<first affected month>', <months>);`
-5. `INSERT INTO events SELECT * FROM events_default_old;` (each row lands in its month, or in the new
-   default if still out of range)
-6. Check the row counts match, then `DROP TABLE events_default_old;` and commit.
+5. Move the rows one org at a time. RLS is forced on `events`, so the owner can only insert rows for
+   the org in `app.org_id`; a plain `INSERT … SELECT` is rejected by `events_org_isolation`:
 
-The same applies to `webhook_deliveries`. Rehearse it on a Neon branch first; record it in the
+   ```sql
+   DO $$
+   DECLARE o text;
+   BEGIN
+     FOR o IN SELECT DISTINCT org_id FROM events_default_old LOOP
+       PERFORM set_config('app.org_id', o, true);
+       INSERT INTO events SELECT * FROM events_default_old WHERE org_id = o;
+     END LOOP;
+     PERFORM set_config('app.org_id', '', true);
+   END $$;
+   ```
+
+   Each row lands in its month, or in the new default if still out of range.
+6. Check the counts match by reading the partitions directly (they have no RLS of their own; a count
+   through `events` without an org context returns 0): `SELECT count(*) FROM events_default_old;`
+   equals the sum over the affected month partitions and `events_default`. Then
+   `DROP TABLE events_default_old;` and commit.
+
+The same applies to `webhook_deliveries` (its policy is on `org_id` too). Rehearse it on a Neon branch first; record it in the
 release issue.
 
 A scheduled job to keep partitions ahead arrives with its own issue; until then this is a calendar
