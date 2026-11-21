@@ -94,10 +94,22 @@ describe('listEvents', () => {
         await insertEvent(scope, { id: testId('evt', base + i * 1000), type: 'access.granted', occurredAt: new Date(base) })
       }
     })
-    for (const limit of [Number.NaN, Number.POSITIVE_INFINITY]) {
-      const page = await withOrg(db, c.orgId, (scope) => listEvents(scope, { limit }))
-      expect(page.data).toHaveLength(DEFAULT_LIMIT)
-      expect(page.nextCursor).not.toBeNull()
+    // Capture the SQL the driver sends, so the test sees the LIMIT itself, not just the page.
+    const sent: { query: string, parameters: unknown[] }[] = []
+    const traced = postgres(inject('appUrl'), { max: 1, onnotice: () => {}, debug: (_conn, query, parameters) => { sent.push({ query, parameters }) } })
+    try {
+      const tracedDb = createDb(traced)
+      for (const limit of [Number.NaN, Number.POSITIVE_INFINITY]) {
+        sent.length = 0
+        const page = await withOrg(tracedDb, c.orgId, (scope) => listEvents(scope, { limit }))
+        expect(page.data).toHaveLength(DEFAULT_LIMIT)
+        expect(page.nextCursor).not.toBeNull()
+        const select = sent.find((q) => q.query.includes('from "events"'))
+        expect(select?.query).toMatch(/limit \$\d+$/)
+        expect(Number(select?.parameters.at(-1))).toBe(DEFAULT_LIMIT + 1)
+      }
+    } finally {
+      await traced.end()
     }
   })
 
