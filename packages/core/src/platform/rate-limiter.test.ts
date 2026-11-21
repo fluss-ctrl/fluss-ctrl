@@ -32,6 +32,15 @@ describe('takeTokens', () => {
     expect(state).toEqual({ tokens: 1, updatedAt: T0 })
   })
 
+  it('includes the rollback gap in retryAfterMs, so waiting that long is enough', () => {
+    const empty: TokenBucketState = { tokens: 0, updatedAt: T0 }
+    const now = T0 - 60_000
+    const { state, decision } = takeTokens(empty, policy, 1, now)
+    expect(decision).toEqual({ allowed: false, remaining: 0, retryAfterMs: 60_500 })
+    expect(takeTokens(state, policy, 1, now + decision.retryAfterMs).decision.allowed).toBe(true)
+    expect(takeTokens(state, policy, 1, now + decision.retryAfterMs - 1).decision.allowed).toBe(false)
+  })
+
   it('clamps a corrupt stored count into range', () => {
     expect(takeTokens({ tokens: 99, updatedAt: T0 }, policy, 1, T0).decision.remaining).toBe(9)
     expect(takeTokens({ tokens: -5, updatedAt: T0 }, policy, 1, T0).decision.allowed).toBe(false)
@@ -48,14 +57,18 @@ describe('takeTokens', () => {
   it('never lets more through than capacity plus refill over any run of calls', () => {
     fc.assert(fc.property(
       fc.record({ capacity: fc.integer({ min: 1, max: 50 }), refillPerSecond: fc.double({ min: 0.01, max: 20, noNaN: true }) }),
-      fc.array(fc.record({ gapMs: fc.integer({ min: 0, max: 5_000 }), cost: fc.integer({ min: 1, max: 50 }) }), { maxLength: 60 }),
+      fc.array(fc.record({ gapMs: fc.integer({ min: -2_000, max: 5_000 }), cost: fc.integer({ min: 1, max: 50 }) }), { maxLength: 60 }),
       ({ capacity, refillPerSecond }, calls) => {
         const p = { name: 'prop', capacity, refillPerSecond }
         let state: TokenBucketState | undefined
         let now = T0
         let taken = 0
+        let latest = Number.NEGATIVE_INFINITY
+        let first: number | undefined
         for (const call of calls) {
           now += call.gapMs
+          latest = Math.max(latest, now)
+          first ??= now
           const cost = Math.min(call.cost, capacity)
           const result = takeTokens(state, p, cost, now)
           state = result.state
@@ -67,7 +80,8 @@ describe('takeTokens', () => {
             expect(takeTokens(state, p, cost, now + result.decision.retryAfterMs).decision.allowed).toBe(true)
           }
         }
-        const budget = capacity + ((now - T0) / 1000) * refillPerSecond
+        // The bucket starts full at the first call; time only counts once the clock passes its high-water mark.
+        const budget = first === undefined ? capacity : capacity + ((latest - first) / 1000) * refillPerSecond
         expect(taken).toBeLessThanOrEqual(budget + 1e-9)
       }
     ))

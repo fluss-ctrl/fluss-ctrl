@@ -58,11 +58,24 @@ describe('consumeBatch', () => {
     expect(result.retryBatch.retry).toBe(false)
   })
 
-  it('retries the whole batch if the handler throws', async () => {
+  it('retries every undecided message if the handler throws, keeping explicit acks', async () => {
     const batch = createMessageBatch<unknown>('fluss-ctrl-test', messages)
-    await expect(consumeBatch(batch, schema, async () => { throw new Error('boom') })).rejects.toThrow('boom')
+    await expect(consumeBatch(batch, schema, async (msgs) => {
+      msgs[0]?.ack()
+      throw new Error('boom')
+    })).rejects.toThrow('boom')
     const result = await getQueueResult(batch, createExecutionContext())
-    expect(result.retryBatch.retry).toBe(true)
+    expect(result.explicitAcks).toEqual(['m1'])
+    expect(result.retryMessages.map((m) => m.msgId).sort()).toEqual(['m2', 'm3'])
+  })
+
+  it('retries a message the handler left undecided, and keeps the one it acked', async () => {
+    const batch = createMessageBatch<unknown>('fluss-ctrl-test', messages)
+    await consumeBatch(batch, schema, async (msgs) => { msgs[0]?.ack() })
+    const result = await getQueueResult(batch, createExecutionContext())
+    expect(result.explicitAcks).toEqual(['m1'])
+    expect(result.retryMessages.map((m) => m.msgId).sort()).toEqual(['m2', 'm3'])
+    expect(result.retryBatch.retry).toBe(false)
   })
 
   it('does not call the handler when no body is valid', async () => {

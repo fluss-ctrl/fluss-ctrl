@@ -63,6 +63,8 @@ export function takeTokens (
     const left = tokens - cost
     return { state: { tokens: left, updatedAt }, decision: { allowed: true, remaining: Math.floor(left), retryAfterMs: 0 } }
   }
-  const retryAfterMs = Math.ceil(((cost - tokens) / policy.refillPerSecond) * 1000)
+  // After a clock step back, nothing refills until the clock passes updatedAt again, so add that gap.
+  const rollbackMs = Math.max(0, updatedAt - nowMs)
+  const retryAfterMs = rollbackMs + Math.ceil(((cost - tokens) / policy.refillPerSecond) * 1000)
   return { state: { tokens, updatedAt }, decision: { allowed: false, remaining: Math.floor(tokens), retryAfterMs } }
 }

@@ -6,7 +6,9 @@ export function kvCache (kv: KVNamespace): Cache {
   return {
     async get (key) {
       assertCacheKey(key)
-      return (await kv.get(key, 'json')) ?? undefined
+      // Read text, not 'json': KV returns null for a missing key, so a cached JSON null must be told apart.
+      const text = await kv.get(key, 'text')
+      return text === null ? undefined : JSON.parse(text) as unknown
     },
     async put (key, value, { ttlSeconds }) {
       assertCacheKey(key)

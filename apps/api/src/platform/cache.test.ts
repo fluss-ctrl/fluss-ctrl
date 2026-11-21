@@ -22,6 +22,11 @@ describe('kvCache', () => {
     expect(expiration).toBeLessThanOrEqual(before + 121)
   })
 
+  it('round-trips a cached null as null, not as a miss', async () => {
+    await cache.put('null:key', null, { ttlSeconds: 60 })
+    expect(await cache.get('null:key')).toBeNull()
+  })
+
   it('returns undefined for a missing key and after delete', async () => {
     expect(await cache.get('missing')).toBeUndefined()
     await cache.put('gone', 'x', { ttlSeconds: 60 })
