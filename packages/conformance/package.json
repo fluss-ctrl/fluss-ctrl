@@ -12,7 +12,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
-    "typescript": "6.0.3",
+    "@flussctrl/provider-simulator": "workspace:*",
+    "typescript": "6.0.3"
+  },
+  "dependencies": {
+    "@flussctrl/core": "workspace:*",
     "vitest": "5.1.1"
   }
 }
