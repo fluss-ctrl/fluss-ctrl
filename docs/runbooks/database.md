@@ -67,24 +67,32 @@ owner, with writes to the table paused (it takes an exclusive lock):
 
    ```sql
    DO $$
-   DECLARE o text;
+   DECLARE o text; moved bigint := 0; n bigint;
    BEGIN
      FOR o IN SELECT DISTINCT org_id FROM events_default_old LOOP
        PERFORM set_config('app.org_id', o, true);
        INSERT INTO events SELECT * FROM events_default_old WHERE org_id = o;
+       GET DIAGNOSTICS n = ROW_COUNT;
+       moved := moved + n;
      END LOOP;
      PERFORM set_config('app.org_id', '', true);
+     IF moved <> (SELECT count(*) FROM events_default_old) THEN
+       RAISE EXCEPTION 'moved % rows, expected %', moved, (SELECT count(*) FROM events_default_old);
+     END IF;
    END $$;
    ```
 
-   Each row lands in its month, or in the new default if still out of range.
-6. Check the counts match by reading the partitions directly (they have no RLS of their own; a count
-   through `events` without an org context returns 0): `SELECT count(*) FROM events_default_old;`
-   equals the sum over the affected month partitions and `events_default`. Then
-   `DROP TABLE events_default_old;` and commit.
+   Each row lands in its month, or in the new default if still out of range. The block counts what
+   it inserted and aborts the transaction if that differs from the old default, so rows already in
+   the month partitions never skew the check.
+6. `DROP TABLE events_default_old;` and commit.
+7. Check the new default directly (partitions have no RLS of their own):
+   `SELECT min(recorded_at), max(recorded_at), count(*) FROM events_default;`. If it still holds
+   rows (one call creates at most 36 months), repeat from step 1 for the remaining range. Resume
+   routine maintenance only when both `events_default` and `webhook_deliveries_default` are empty.
 
-The same applies to `webhook_deliveries` (its policy is on `org_id` too). Rehearse it on a Neon branch first; record it in the
-release issue.
+The same applies to `webhook_deliveries` (its policy is on `org_id` too). Rehearse it on a Neon
+branch first; record it in the release issue.
 
 A scheduled job to keep partitions ahead arrives with its own issue; until then this is a calendar
 reminder well before January 2028.
