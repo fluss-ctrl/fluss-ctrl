@@ -26,7 +26,7 @@ Tables by phase (§5): 0–1 `organisations`, `clients`, `client_secrets`, membe
 - IDs: prefixed, URL-safe, globally unique: `org_…`, `site_…`, `ctl_…`, `dev_…`, `grp_…`, `sub_…`, `grt_…`, `cmd_…`, `evt_…`, `whk_…`, `cli_…`, `emg_…`. Use UUIDv7 under the prefix (sortable).
 - Timestamps: RFC 3339 UTC (`2026-10-14T12:00:00Z`). Durations in seconds. Schedules carry an IANA timezone.
 - Versioning: path (`/v1`). Additive changes do not bump. Breaking changes → `/v2` with a 12-month overlap. `oasdiff` enforces this in CI.
-- Idempotency: `Idempotency-Key` header (UUID) is **required** on `POST /devices/{id}/commands` and accepted on all other POSTs. Keys are scoped to the client. For commands the key lives on the command itself (`UNIQUE(client_id, idempotency_key)`), so it is honoured for as long as the command is retained (90 days, §14): a replay never actuates twice and returns the **current** state of the original command with `Idempotent-Replayed: true` (and honours `?wait=`). For other POSTs the response is stored for 24 h (`idempotency_keys`) and replayed as it was. The same key with a different request body is `422 idempotency_key_reused`; a replay that arrives while the original is still being accepted is `409 idempotency_in_progress`.
+- Idempotency: `Idempotency-Key` header (UUID) is **required** on `POST /devices/{id}/commands` and accepted on all other POSTs. Keys are scoped to the client. For commands the key lives on the command itself (`UNIQUE(org_id, client_id, idempotency_key)`), so it is honoured for as long as the command is retained (90 days, §14): a replay never actuates twice and returns the **current** state of the original command with `Idempotent-Replayed: true` (and honours `?wait=`). For other POSTs the response is stored for 24 h (`idempotency_keys`) and replayed as it was. The same key with a different request body is `422 idempotency_key_reused`; a replay that arrives while the original is still being accepted is `409 idempotency_in_progress`.
 - Pagination: cursor-based. `?limit=` (default 50, max 200) and `?cursor=`. Responses: `{ "data": [...], "next_cursor": "…" | null }`.
 - Filtering: documented per list endpoint; always supports `?site_id=`.
 - Errors (RFC 9457 problem details):
@@ -241,7 +241,7 @@ Every table: `id`, `created_at`, `updated_at`; soft-delete via `archived_at` whe
 
 How this is built (issue #5, ADR-0003):
 - Every table except `organisations` (whose policy reads `id`) and the global `providers` catalogue carries `org_id`, including child tables that could reach it through a parent (`client_secrets`, `idempotency_keys`, `ingested_refs`, `webhook_deliveries`), so that every table has the same one-line policy: `org_id = current_setting('app.org_id', true)`, for reads and writes, with RLS enabled and forced. With no context set a query sees no rows.
-- Foreign-key checks bypass RLS, so every reference between org-scoped tables is a composite key on `(org_id, <column>)` to the parent's `(org_id, id)`: a row can only point at a row of its own organisation, and a failed reference reveals nothing about other organisations. The planned `device_shares` (§2, v1.1) relaxes the device references on grants and commands when it lands.
+- Foreign-key checks bypass RLS, so every reference between org-scoped tables is a composite key on `(org_id, <column>)` to the parent's `(org_id, id)`: a row can only point at a row of its own organisation, and a failed reference reveals nothing about other organisations. For the same reason `org_id` leads every unique key that contains such a reference (`UNIQUE(org_id, controller_id, channel)`, `UNIQUE(org_id, client_id, idempotency_key)`, and the `idempotency_keys` and `ingested_refs` primary keys), so a duplicate-key error cannot reveal another organisation's row either. Uniqueness is unchanged, because the referenced row belongs to one organisation. The planned `device_shares` (§2, v1.1) relaxes the device references on grants and commands when it lands.
 - The API's database role is a member of `fluss_app`: no `BYPASSRLS`, DML only where the API needs it, append-only on `events` (except the pseudonymisation columns, §14) and `audit_log`, read-only on `providers`, and no privilege on any partition, so partitioned rows are reachable only through the parent and its policy.
 - Work that must cross organisations (the token endpoint finding a client before it knows the org, the outbox sweep, retention and reconciliation crons) does not get a bypass role. The issue that builds each one adds a narrow `SECURITY DEFINER` function that returns only the columns it needs.
 - Status-like columns are `text` with a `CHECK`, not enum types, so adding a value is an ordinary expand-only migration. Ids are the prefixed `text` ids of §1.
@@ -273,7 +273,7 @@ controllers     id, org_id, site_id, provider, provider_ref (vendor's unit id), 
 devices         id, org_id, site_id, controller_id, channel (provider-defined, e.g. `main`, `io:1`, `button:2`),
                 channel_role (main|pedestrian|switch|other|null), group_id,
                 name, kind, egress bool, controls jsonb, capabilities jsonb, last_status jsonb, metadata, archived_at
-                UNIQUE(controller_id, channel)
+                UNIQUE(org_id, controller_id, channel)
                 -- the access point platforms talk to; `online` is derived from the controller.
 device_groups   id, org_id, site_id, name, metadata, archived_at
 subjects        id, org_id, external_id, name, phone, email, metadata, erased_at
@@ -285,7 +285,7 @@ grants          id, org_id, site_id, subject_id, device_id|null, group_id|null, 
 commands        id, org_id, site_id, device_id, subject_id, grant_id, action, params jsonb,
                 state, verification_level, requested_at, sent_at, acked_at, completed_at,
                 outcome jsonb, error_code, idempotency_key, client_id, actor jsonb (human/agent), emergency_id
-                UNIQUE(client_id, idempotency_key)
+                UNIQUE(org_id, client_id, idempotency_key)
 events          id, org_id, site_id, device_id, subject_id, grant_id, command_id, type, method,
                 result, occurred_at, recorded_at, data jsonb, pseudonymised_at
                 PRIMARY KEY (id, recorded_at); PARTITION BY RANGE (recorded_at), monthly, plus a default partition;
@@ -294,7 +294,7 @@ events          id, org_id, site_id, device_id, subject_id, grant_id, command_id
                 -- `recorded_at` is the time inside the UUIDv7 id, so a lookup by id prunes to one partition.
                 -- `occurred_at` is device-reported and can be late or wrong: data, never a partition key.
 ingested_refs   org_id, controller_id, provider_event_ref, event_id, recorded_at
-                PRIMARY KEY (controller_id, provider_event_ref)   (ingest dedup, §8.1; pruned after 90 days)
+                PRIMARY KEY (org_id, controller_id, provider_event_ref)   (ingest dedup, §8.1; pruned after 90 days)
 webhook_endpoints id, org_id, url, secret_hash, previous_secret_hash, previous_secret_expires_at,
                 event_types text[], status, failure_count, description
 site_emergencies id, org_id, site_id, mode, started_at, ended_at, reason, started_by, ended_by,

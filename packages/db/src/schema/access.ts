@@ -96,7 +96,7 @@ export const commands = pgTable('commands', {
   check('commands_state_check', oneOf(t.state, COMMAND_STATES)),
   check('commands_verification_level_check', oneOf(t.verificationLevel, VERIFICATION_LEVELS)),
   // The command carries its own idempotency key for as long as it is retained (SPEC §1).
-  unique('commands_client_id_idempotency_key_key').on(t.clientId, t.idempotencyKey),
+  unique('commands_org_id_client_id_idempotency_key_key').on(t.orgId, t.clientId, t.idempotencyKey),
   sameOrg('commands_site_fk', t.orgId, t.siteId, sites.orgId, sites.id),
   sameOrg('commands_device_fk', t.orgId, t.deviceId, devices.orgId, devices.id),
   sameOrg('commands_subject_fk', t.orgId, t.subjectId, subjects.orgId, subjects.id),

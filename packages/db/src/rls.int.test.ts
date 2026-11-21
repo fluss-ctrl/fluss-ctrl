@@ -160,6 +160,9 @@ describe('constraints that span organisations', () => {
     const asA = (work: (tx: Parameters<Parameters<typeof withOrg>[2]>[0]['tx']) => Promise<unknown>) => withOrg(db, a.orgId, ({ tx }) => work(tx))
     expect(await dbError(asA((tx) => tx.insert(s.devices).values({ id: testId('dev'), orgId: a.orgId, siteId: a.siteId, controllerId: b.controllerId, channel: 'x', name: 'x' })))).toMatch(/devices_controller_fk/)
     expect(await dbError(asA((tx) => tx.insert(s.devices).values({ id: testId('dev'), orgId: a.orgId, siteId: a.siteId, controllerId: testId('ctl'), channel: 'x', name: 'x' })))).toMatch(/devices_controller_fk/)
+    // B's controller with a channel B already uses: a unique check would run first and give it away.
+    const [bDevice] = await withOrg(db, b.orgId, ({ tx }) => tx.select({ channel: s.devices.channel }).from(s.devices).where(sql`${s.devices.id} = ${b.deviceId}`))
+    expect(await dbError(asA((tx) => tx.insert(s.devices).values({ id: testId('dev'), orgId: a.orgId, siteId: a.siteId, controllerId: b.controllerId, channel: bDevice!.channel, name: 'x' })))).toMatch(/devices_controller_fk/)
     expect(await dbError(asA((tx) => tx.insert(s.idempotencyKeys).values({ orgId: a.orgId, clientId: b.clientId, key: randomUUID(), requestHash: 'r', expiresAt: new Date() })))).toMatch(/idempotency_keys_client_fk/)
     expect(await dbError(asA((tx) => tx.insert(s.clientSecrets).values({ id: randomUUID(), orgId: a.orgId, clientId: b.clientId, hash: 'h', salt: 's' })))).toMatch(/client_secrets_client_fk/)
     expect(await dbError(asA((tx) => tx.insert(s.sites).values({ id: testId('site'), orgId: a.orgId, name: 'x', timezone: 'UTC' }).then(() =>
@@ -178,6 +181,24 @@ describe('constraints that span organisations', () => {
           SELECT 1 FROM unnest(c.conkey) k JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k
           WHERE a.attname = 'org_id')
         AND NOT c.conparentid <> 0`
+    expect(rows.map((r) => r.conname)).toEqual([])
+  })
+
+  it('leads every unique key over such a reference with org_id', async () => {
+    // A unique check runs before the foreign-key check, so a key that holds a reference without
+    // org_id would reveal another org's row through a duplicate-key error.
+    const rows = await owner<{ conname: string }[]>`
+      SELECT u.conname FROM pg_constraint u
+      WHERE u.contype IN ('u', 'p') AND u.connamespace = 'public'::regnamespace AND u.conparentid = 0
+        AND EXISTS (
+          SELECT 1 FROM pg_constraint f
+          JOIN pg_class p ON p.oid = f.confrelid
+          WHERE f.contype = 'f' AND f.conrelid = u.conrelid AND f.conparentid = 0
+            AND p.relname NOT IN ('organisations', 'providers')
+            AND f.conkey && u.conkey)
+        AND NOT EXISTS (
+          SELECT 1 FROM unnest(u.conkey) k JOIN pg_attribute a ON a.attrelid = u.conrelid AND a.attnum = k
+          WHERE a.attname = 'org_id')`
     expect(rows.map((r) => r.conname)).toEqual([])
   })
 

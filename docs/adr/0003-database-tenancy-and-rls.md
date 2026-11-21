@@ -39,8 +39,12 @@ table without the policy, or a partition the API can reach, ever appears.
 
 Foreign-key checks run without row security, so every reference between org-scoped tables is a
 composite key `(org_id, <column>)` → `(org_id, id)`: org A cannot point a row at org B's client,
-device or endpoint, and the error does not reveal whether B's row exists. A second catalogue test
-fails on any foreign key between org-scoped tables that leaves `org_id` out.
+device or endpoint, and the error does not reveal whether B's row exists. Unique checks also run
+before foreign-key checks and without row security, so `org_id` leads every unique key that holds
+such a reference (devices' channel, commands' idempotency key, `idempotency_keys`,
+`ingested_refs`); a duplicate-key error cannot reveal B's row either. Catalogue tests fail on any
+foreign key between org-scoped tables, or any unique key over one of its columns, that leaves
+`org_id` out.
 
 Cross-org work (token lookup before the org is known, the outbox sweep, retention and
 reconciliation crons) gets narrow `SECURITY DEFINER` functions, added by the issue that needs each

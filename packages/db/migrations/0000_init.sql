@@ -27,7 +27,7 @@ CREATE TABLE "commands" (
 	"actor" jsonb,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "commands_client_id_idempotency_key_key" UNIQUE("client_id","idempotency_key"),
+	CONSTRAINT "commands_org_id_client_id_idempotency_key_key" UNIQUE("org_id","client_id","idempotency_key"),
 	CONSTRAINT "commands_id_check" CHECK ("commands"."id" ~ '^cmd_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "commands_action_check" CHECK ("commands"."action" IN ('trigger', 'open', 'close')),
 	CONSTRAINT "commands_state_check" CHECK ("commands"."state" IN ('queued', 'sent', 'acked', 'confirmed', 'unconfirmed', 'unverified', 'timed_out', 'rejected', 'failed')),
@@ -133,7 +133,7 @@ CREATE TABLE "devices" (
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "devices_controller_id_channel_key" UNIQUE("controller_id","channel"),
+	CONSTRAINT "devices_org_id_controller_id_channel_key" UNIQUE("org_id","controller_id","channel"),
 	CONSTRAINT "devices_org_id_id_key" UNIQUE("org_id","id"),
 	CONSTRAINT "devices_id_check" CHECK ("devices"."id" ~ '^dev_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
 	CONSTRAINT "devices_channel_role_check" CHECK ("devices"."channel_role" IN ('main', 'pedestrian', 'switch', 'other')),
@@ -206,7 +206,7 @@ CREATE TABLE "ingested_refs" (
 	"provider_event_ref" text NOT NULL,
 	"event_id" text NOT NULL,
 	"recorded_at" timestamp with time zone NOT NULL,
-	CONSTRAINT "ingested_refs_pkey" PRIMARY KEY("controller_id","provider_event_ref")
+	CONSTRAINT "ingested_refs_pkey" PRIMARY KEY("org_id","controller_id","provider_event_ref")
 );
 --> statement-breakpoint
 CREATE TABLE "client_secrets" (
@@ -247,7 +247,7 @@ CREATE TABLE "idempotency_keys" (
 	"response" jsonb,
 	"expires_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
-	CONSTRAINT "idempotency_keys_pkey" PRIMARY KEY("client_id","key")
+	CONSTRAINT "idempotency_keys_pkey" PRIMARY KEY("org_id","client_id","key")
 );
 --> statement-breakpoint
 CREATE TABLE "org_members" (
@@ -369,10 +369,8 @@ CREATE INDEX "events_org_id_recorded_at_idx" ON "events" USING btree ("org_id","
 CREATE INDEX "events_device_id_recorded_at_idx" ON "events" USING btree ("device_id","recorded_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_subject_id_recorded_at_idx" ON "events" USING btree ("subject_id","recorded_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE INDEX "events_org_id_occurred_at_idx" ON "events" USING btree ("org_id","occurred_at");--> statement-breakpoint
-CREATE INDEX "ingested_refs_org_id_controller_id_idx" ON "ingested_refs" USING btree ("org_id","controller_id");--> statement-breakpoint
 CREATE INDEX "ingested_refs_recorded_at_idx" ON "ingested_refs" USING btree ("recorded_at");--> statement-breakpoint
 CREATE INDEX "client_secrets_org_id_client_id_idx" ON "client_secrets" USING btree ("org_id","client_id");--> statement-breakpoint
-CREATE INDEX "idempotency_keys_org_id_client_id_idx" ON "idempotency_keys" USING btree ("org_id","client_id");--> statement-breakpoint
 CREATE INDEX "idempotency_keys_expires_at_idx" ON "idempotency_keys" USING btree ("expires_at");--> statement-breakpoint
 CREATE INDEX "org_members_user_id_idx" ON "org_members" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "webhook_deliveries_org_id_created_at_idx" ON "webhook_deliveries" USING btree ("org_id","created_at" DESC NULLS LAST);--> statement-breakpoint

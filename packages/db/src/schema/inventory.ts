@@ -94,7 +94,7 @@ export const devices = pgTable('devices', {
   check('devices_id_check', prefixedId(t.id, 'dev')),
   check('devices_channel_role_check', oneOf(t.channelRole, CHANNEL_ROLES)),
   check('devices_kind_check', oneOf(t.kind, DEVICE_KINDS)),
-  unique('devices_controller_id_channel_key').on(t.controllerId, t.channel),
+  unique('devices_org_id_controller_id_channel_key').on(t.orgId, t.controllerId, t.channel),
   unique('devices_org_id_id_key').on(t.orgId, t.id),
   sameOrg('devices_site_fk', t.orgId, t.siteId, sites.orgId, sites.id),
   sameOrg('devices_controller_fk', t.orgId, t.controllerId, controllers.orgId, controllers.id),

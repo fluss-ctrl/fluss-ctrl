@@ -7,7 +7,7 @@ import { createDb, type Db } from '../client.ts'
 import { withOrg } from '../scope.ts'
 import { testId } from '../test/ids.ts'
 import { seedOrg, type SeededOrg } from '../test/seed.ts'
-import { insertEvent, listEvents, type EventRow } from './events.ts'
+import { DEFAULT_LIMIT, insertEvent, listEvents, type EventRow } from './events.ts'
 
 let client: postgres.Sql
 let db: Db
@@ -87,9 +87,18 @@ describe('listEvents', () => {
   })
 
   it('treats a non-finite limit as the default, never as no limit', async () => {
-    const page = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: Number.NaN }))
-    expect(page.data).toHaveLength(8)
-    expect(page.nextCursor).toBeNull()
+    // More rows than the default page, so a dropped LIMIT would show.
+    const c = await seedOrg(db)
+    await withOrg(db, c.orgId, async (scope) => {
+      for (let i = 0; i < DEFAULT_LIMIT + 10; i++) {
+        await insertEvent(scope, { id: testId('evt', base + i * 1000), type: 'access.granted', occurredAt: new Date(base) })
+      }
+    })
+    for (const limit of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const page = await withOrg(db, c.orgId, (scope) => listEvents(scope, { limit }))
+      expect(page.data).toHaveLength(DEFAULT_LIMIT)
+      expect(page.nextCursor).not.toBeNull()
+    }
   })
 
   it('returns a null cursor on the last page and rejects a forged one', async () => {

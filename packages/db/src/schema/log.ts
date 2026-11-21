@@ -51,9 +51,8 @@ export const ingestedRefs = pgTable('ingested_refs', {
   eventId: text('event_id').notNull(),
   recordedAt: tstz('recorded_at').notNull(),
 }, (t) => [
-  primaryKey({ columns: [t.controllerId, t.providerEventRef], name: 'ingested_refs_pkey' }),
+  primaryKey({ columns: [t.orgId, t.controllerId, t.providerEventRef], name: 'ingested_refs_pkey' }),
   sameOrg('ingested_refs_controller_fk', t.orgId, t.controllerId, controllers.orgId, controllers.id),
-  index('ingested_refs_org_id_controller_id_idx').on(t.orgId, t.controllerId),
   index('ingested_refs_recorded_at_idx').on(t.recordedAt),
 ])
 

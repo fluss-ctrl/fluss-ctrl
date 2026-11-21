@@ -87,8 +87,8 @@ export const idempotencyKeys = pgTable('idempotency_keys', {
   expiresAt: tstz('expires_at').notNull(),
   createdAt: tstz('created_at').notNull().defaultNow(),
 }, (t) => [
-  primaryKey({ columns: [t.clientId, t.key], name: 'idempotency_keys_pkey' }),
+  // org_id leads every key that holds a reference, so a clash cannot reveal another org's row.
+  primaryKey({ columns: [t.orgId, t.clientId, t.key], name: 'idempotency_keys_pkey' }),
   sameOrg('idempotency_keys_client_fk', t.orgId, t.clientId, clients.orgId, clients.id),
-  index('idempotency_keys_org_id_client_id_idx').on(t.orgId, t.clientId),
   index('idempotency_keys_expires_at_idx').on(t.expiresAt),
 ])

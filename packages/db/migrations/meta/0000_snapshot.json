@@ -1,5 +1,5 @@
 {
-  "id": "d4f2d2c9-96a3-4344-a1b5-eb7d54b31785",
+  "id": "a93fb6c6-0244-4c5f-be5d-74190014c2e0",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -274,10 +274,11 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "commands_client_id_idempotency_key_key": {
-          "name": "commands_client_id_idempotency_key_key",
+        "commands_org_id_client_id_idempotency_key_key": {
+          "name": "commands_org_id_client_id_idempotency_key_key",
           "nullsNotDistinct": false,
           "columns": [
+            "org_id",
             "client_id",
             "idempotency_key"
           ]
@@ -1295,10 +1296,11 @@
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "devices_controller_id_channel_key": {
-          "name": "devices_controller_id_channel_key",
+        "devices_org_id_controller_id_channel_key": {
+          "name": "devices_org_id_controller_id_channel_key",
           "nullsNotDistinct": false,
           "columns": [
+            "org_id",
             "controller_id",
             "channel"
           ]
@@ -1859,27 +1861,6 @@
         }
       },
       "indexes": {
-        "ingested_refs_org_id_controller_id_idx": {
-          "name": "ingested_refs_org_id_controller_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "controller_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "ingested_refs_recorded_at_idx": {
           "name": "ingested_refs_recorded_at_idx",
           "columns": [
@@ -1930,6 +1911,7 @@
         "ingested_refs_pkey": {
           "name": "ingested_refs_pkey",
           "columns": [
+            "org_id",
             "controller_id",
             "provider_event_ref"
           ]
@@ -2229,27 +2211,6 @@
         }
       },
       "indexes": {
-        "idempotency_keys_org_id_client_id_idx": {
-          "name": "idempotency_keys_org_id_client_id_idx",
-          "columns": [
-            {
-              "expression": "org_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "client_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "idempotency_keys_expires_at_idx": {
           "name": "idempotency_keys_expires_at_idx",
           "columns": [
@@ -2300,6 +2261,7 @@
         "idempotency_keys_pkey": {
           "name": "idempotency_keys_pkey",
           "columns": [
+            "org_id",
             "client_id",
             "key"
           ]
