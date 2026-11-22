@@ -55,16 +55,16 @@ module.exports = {
     {
       name: 'cloudflare-only-in-platform',
       severity: 'error',
-      comment: 'SPEC §11 item 16, §21.3: only apps/api/src/platform touches Cloudflare (the cloudflare:* runtime modules and the Workers types). Everything else uses the Queue, Coordinator, Cache and RateLimiter ports in packages/core. Test files are covered by the next rule.',
+      comment: 'SPEC §11 item 16, §21.3: only apps/api/src/platform touches Cloudflare. Workers types are matched by resolved node_modules path (installed) and by bare name (unresolved) (the cloudflare:* runtime modules and the Workers types). Everything else uses the Queue, Coordinator, Cache and RateLimiter ports in packages/core. Test files are covered by the next rule.',
       from: { path: '^(apps|packages)/', pathNot: ['^apps/api/src/platform/', '\\.test\\.ts$'] },
-      to: { path: ['^cloudflare:', '^@cloudflare/workers-types'] },
+      to: { path: ['^cloudflare:', '(^|/)node_modules/@cloudflare/workers-types(/|$)', '^@cloudflare/workers-types'] },
     },
     {
       name: 'cloudflare-tests-only-test-module',
       severity: 'error',
       comment: 'Tests outside apps/api/src/platform may use the Workers test pool (cloudflare:test) and nothing else from Cloudflare.',
       from: { path: '\\.test\\.ts$', pathNot: '^apps/api/src/platform/' },
-      to: { path: ['^cloudflare:', '^@cloudflare/workers-types'], pathNot: '^cloudflare:test$' },
+      to: { path: ['^cloudflare:', '(^|/)node_modules/@cloudflare/workers-types(/|$)', '^@cloudflare/workers-types'], pathNot: '^cloudflare:test$' },
     },
     {
       name: 'not-to-unresolvable',
