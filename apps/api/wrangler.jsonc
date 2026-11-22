@@ -18,7 +18,7 @@
       { "name": "RATE_LIMITER", "class_name": "TokenBucketLimiter" }
     ]
   },
-  // SQLite-backed storage (ADR-0003). A class's storage backend cannot change once deployed.
+  // SQLite-backed storage (ADR-0004). A class's storage backend cannot change once deployed.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["DeviceCoordinator", "TokenBucketLimiter"] }
   ],
