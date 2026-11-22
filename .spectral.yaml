@@ -1,0 +1,8 @@
+# Spectral lint for apps/api/openapi.json (SPEC §11 item 2), run by `pnpm openapi:lint` and CI.
+# The built-in OpenAPI ruleset, failing on warnings as well as errors.
+extends: ["spectral:oas"]
+rules:
+  # The document deliberately publishes shared components (ids, pagination, error responses) before
+  # the endpoints that use them exist: Phase 0 is /health plus the shared parts (decision on #13).
+  # Turn this back on once Phase 1 routes reference them all.
+  oas3-unused-component: off

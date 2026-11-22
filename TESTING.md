@@ -8,7 +8,7 @@ fast-check property tests; time-dependent code uses the injected clock; no `.ski
 |---|-------|------|---------|--------|
 | 1 | Unit | Vitest | `pnpm test:unit` | ✅ runs every workspace's `src/**/*.test.ts` (and `scripts/*.test.mjs`) with coverage; CI `unit` job |
 | 1a | Property-based | fast-check in Vitest | `pnpm test:unit` | arrives with the first parser or grant logic |
-| 2 | Contract (routes vs committed `openapi.json`) | Vitest, oasdiff, Spectral | `pnpm test:unit`; oasdiff and Spectral in CI | needs OpenAPI generation (#7); oasdiff and Spectral jobs arrive with #7 |
+| 2 | Contract (routes vs committed `apps/api/openapi.json`) | Vitest + `@cfworker/json-schema`, oasdiff, Spectral | `pnpm test:unit`; `pnpm openapi:check`, `pnpm openapi:lint`; oasdiff in CI | ✅ `apps/api/src/openapi.test.ts` fails if the committed file differs from what the routes generate, if a served route is undocumented, or if a response breaks the document (use `contractViolations` from `apps/api/src/contract.ts` in each route's tests); CI `openapi` job runs the drift check, Spectral and oasdiff against the base commit |
 | 3 | Provider conformance (simulator) | Vitest (`packages/conformance`) | `pnpm test:unit` | skeleton in #8 |
 | 4 | Integration (real Postgres) | Vitest + Testcontainers | `pnpm test:integration` (Docker) | ✅ runs in CI (`integration` job); no suites until #5 |
 | 4 | Integration (Cloudflare bindings: Durable Objects, KV, Queues) | Vitest + `@cloudflare/vitest-plugin` (Miniflare/workerd) | `pnpm test:unit` (no Docker) | ✅ every `apps/api` test runs inside workerd with the bindings from `apps/api/wrangler.jsonc`; remote bindings are off |
@@ -32,7 +32,7 @@ Workflows live in `.github/workflows/` and use no secret other than the automati
 
 | Workflow | Runs on | Jobs |
 |---|---|---|
-| `ci.yml` | PRs, pushes to `main` | `lint` (ESLint + dependency-cruiser), `typecheck`, `unit` (`pnpm test:unit`, coverage floor, changed-lines comment), `integration` (`pnpm test:integration`, Docker on the runner), `squawk` (changed migrations), and `ci`, which passes only if all of them did |
+| `ci.yml` | PRs, pushes to `main` | `lint` (ESLint + dependency-cruiser), `typecheck`, `unit` (`pnpm test:unit`, coverage floor, changed-lines comment), `integration` (`pnpm test:integration`, Docker on the runner), `squawk` (changed migrations), `openapi` (drift check, Spectral, oasdiff breaking changes against the base commit), and `ci`, which passes only if all of them did |
 | `security.yml` | PRs, pushes to `main` | `semgrep` (Semgrep CE, fails on ERROR severity), `gitleaks` (full history, any finding fails) |
 | `dependency-review.yml` | PRs | GitHub dependency review, fails on high or critical |
 | `release-please.yml` | pushes to `main` | opens or updates the release PR (manifest mode; no publish step) |

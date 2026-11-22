@@ -1,4 +1,4 @@
-# CI (SPEC §11 items 1, 4, 12 and 15; PLAN §8). Nothing merges red. The `ci` job at the end is the
+# CI (SPEC §11 items 1, 2, 4, 12 and 15; PLAN §8). Nothing merges red. The `ci` job at the end is the
 # single check to require in the main ruleset: it fails if any job above it failed or was cancelled.
 # Uses no secret other than the automatic GITHUB_TOKEN.
 name: CI
@@ -136,10 +136,53 @@ jobs:
         if: steps.changed.outputs.count == '0'
         run: echo "No migration files changed; nothing for squawk to lint."
 
+  openapi:
+    name: OpenAPI (drift, Spectral, oasdiff)
+    runs-on: ubuntu-24.04 # ships Docker, which runs oasdiff
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # oasdiff compares against the base commit's document
+      - uses: ./.github/actions/setup
+
+      # SPEC §11 item 2. The committed document must be what the routes generate (the contract
+      # tests in the unit job check this too, and validate responses against it).
+      - name: openapi.json is up to date
+        run: pnpm openapi:check
+
+      - name: Spectral
+        run: pnpm openapi:lint
+
+      # Breaking changes inside /v1 fail CI (SPEC §1, §17). Compared with the base commit's
+      # document; skipped when the base has none (the PR that introduces it).
+      - name: Find the base document
+        id: base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -n "$BASE_SHA" ] && git cat-file -e "$BASE_SHA:apps/api/openapi.json" 2>/dev/null; then
+            git show "$BASE_SHA:apps/api/openapi.json" > "$RUNNER_TEMP/openapi-base.json"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: oasdiff (breaking changes)
+        if: steps.base.outputs.found == 'true'
+        run: |
+          cp apps/api/openapi.json "$RUNNER_TEMP/openapi-revision.json"
+          docker run --rm -v "$RUNNER_TEMP:/w:ro" -w /w \
+            tufin/oasdiff:v1.35.0@sha256:82b1840a77335562bb11ce95f77ad31745a0c6f3a770929333ed1c5ef466e400 \
+            breaking openapi-base.json openapi-revision.json --fail-on ERR
+      - name: No base document
+        if: steps.base.outputs.found != 'true'
+        run: echo "The base commit has no apps/api/openapi.json; nothing for oasdiff to compare."
+
   ci:
     name: ci
     if: always()
-    needs: [lint, typecheck, unit, integration, squawk]
+    needs: [lint, typecheck, unit, integration, squawk, openapi]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

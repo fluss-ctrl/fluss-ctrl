@@ -17,13 +17,16 @@
     "lint": "eslint . && pnpm lint:deps",
     "lint:deps": "depcruise apps packages --config .dependency-cruiser.cjs",
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
-    "openapi": "node scripts/not-yet-implemented.mjs openapi \"OpenAPI generation from routes\" 7",
+    "openapi": "pnpm --filter @flussctrl/api openapi",
+    "openapi:check": "pnpm --filter @flussctrl/api openapi --check",
+    "openapi:lint": "spectral lint apps/api/openapi.json --fail-severity warn",
     "db:generate": "pnpm --filter @flussctrl/db db:generate",
     "db:migrate:dev": "pnpm --filter @flussctrl/db db:migrate:dev"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.4",
     "@commitlint/config-conventional": "21.2.4",
+    "@stoplight/spectral-cli": "6.17.1",
     "@types/node": "22.20.5",
     "@vitest/coverage-v8": "5.1.1",
     "dependency-cruiser": "18.8.0",
