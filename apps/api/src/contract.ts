@@ -82,7 +82,8 @@ export async function contractViolations (res: Response, method: Method, path: s
 
   const responses = operation['responses'] as Json
   const status = String(res.status)
-  const key = status in responses ? status : 'default' in responses ? 'default' : undefined
+  // OpenAPI precedence: the exact status, then its range (`2XX`), then `default`.
+  const key = [status, `${status[0]}XX`, 'default'].find((k) => k in responses)
   if (key === undefined) return [`${where} does not document status ${status}`]
   const response = deref(root, responses[key] as Json, `${base}/responses/${escapePointer(key)}`)
 

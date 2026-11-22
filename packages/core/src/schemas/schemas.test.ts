@@ -83,6 +83,9 @@ describe('pagination', () => {
     expect(page.parse({ data: [{ id }], next_cursor: null })).toEqual({ data: [{ id }], next_cursor: null })
     expect(page.safeParse({ data: [{ id }] }).success).toBe(false)
     expect(NextCursorSchema.parse('c2')).toBe('c2')
+    // An empty cursor could not be sent back as ?cursor=, so a response may not carry one.
+    expect(NextCursorSchema.safeParse('').success).toBe(false)
+    expect(page.safeParse({ data: [], next_cursor: '' }).success).toBe(false)
   })
 })
 

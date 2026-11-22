@@ -21,7 +21,7 @@ export const PaginationQuerySchema = z.object({
   cursor: CursorParamSchema,
 })
 
-export const NextCursorSchema = z.string().nullable().meta({
+export const NextCursorSchema = z.string().min(1).nullable().meta({
   id: 'NextCursor',
   description: 'Cursor for the next page, or `null` on the last page. Opaque: do not parse it.',
 })

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "openapi": "node scripts/openapi.ts",
+    "openapi": "node --experimental-strip-types scripts/openapi.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json && tsc -p scripts/tsconfig.json"
   },

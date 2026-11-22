@@ -108,6 +108,39 @@ describe('contractViolations', () => {
     expect(await contractViolations(broken, 'get', '/health')).toEqual(['GET /health 200: body is not JSON'])
   })
 
+  it('prefers the exact status, then its range, then default (OpenAPI precedence)', async () => {
+    const strict = { type: 'object', required: ['status'], properties: { status: { const: 'ok' } } }
+    const loose = { 'application/json': {} }
+    const doc = {
+      paths: {
+        '/r': {
+          get: {
+            responses: {
+              '2XX': { description: 'range', content: { 'application/json': { schema: strict } } },
+              default: { description: 'any', content: loose },
+            },
+          },
+        },
+        '/e': {
+          get: {
+            responses: {
+              200: { description: 'exact', content: loose },
+              '2XX': { description: 'range', content: { 'application/json': { schema: strict } } },
+            },
+          },
+        },
+      },
+    } as unknown as OpenApiDocument
+    const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+    // 200 matches 2XX, not default, so the strict schema applies.
+    expect((await contractViolations(json({ status: 'broken' }), 'get', '/r', doc)).join('\n')).toContain('body')
+    expect(await contractViolations(json({ status: 'ok' }, 201), 'get', '/r', doc)).toEqual([])
+    // A status outside the range falls back to default.
+    expect(await contractViolations(json({ status: 'broken' }, 500), 'get', '/r', doc)).toEqual([])
+    // An exact status wins over its range.
+    expect(await contractViolations(json({ status: 'broken' }), 'get', '/e', doc)).toEqual([])
+  })
+
   it('checks a problem body through the shared response $ref', async () => {
     const bad = new Response(JSON.stringify({ code: 'made_up' }), {
       status: 500,
