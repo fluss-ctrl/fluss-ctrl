@@ -17,7 +17,7 @@ and webhooks. Device connectivity is **not** ours; it lives behind `Provider` ad
 
 ## Status (update at every phase gate)
 
-- **Current phase: 0, Foundations (4–17 Nov 2026).** Build only what SPEC §0 lists for this phase.
+- **Current phase: 0, Foundations (4 Nov – 8 Dec 2026).** Build only what SPEC §0 lists for this phase.
   Anything tagged with a later phase (emergency modes, billing, admin UI, MCP, connectors,
   Postgres-backed adapters) is context for design, not work: do not create its tables, endpoints,
   Durable Object logic or tests. If a task needs it, stop and ask.
