@@ -22,6 +22,13 @@ PRs and, once `Claude review` is a required check, a broken review blocks merges
   account, the Neon project `fluss-ctrl-nonprod`, and the Anthropic workspace that owns the key.
 - Nothing here touches staging or production. Previews are created and deleted only by the
   workflow; by hand, only clean up leftovers (step 4).
+- The preview job runs the PR's own code (dependency install scripts, migrations, Wrangler) with
+  the `preview` secrets in its environment, so any branch pushed to this repository can read them.
+  Fork and Dependabot PRs never get them. Keep the blast radius small: both tokens are scoped to
+  the non-production Cloudflare account and the `fluss-ctrl-nonprod` Neon project only, never
+  staging or production. Once there is more than one contributor, restrict the `preview`
+  Environment's deployment branches or add a required reviewer. Treat a suspicious push as a
+  leaked secret (Afterwards).
 
 ## What it uses
 
