@@ -21,6 +21,12 @@ Only from CI (`.github/workflows/terraform.yml`), never from a laptop or a sessi
 Inputs (repository variables, none secret): `TF_STATE_BUCKET`, `TF_STATE_REGION`,
 `CLOUDFLARE_DNS_ACCOUNT_ID` (the production Cloudflare account's id) and `CLOUDFLARE_ZONE_ID`.
 
+AWS access is GitHub OIDC. The fluss-ctrl org issues tokens with the ID-pinned subject format,
+so every role trust (and any OIDC role Terraform creates later) must match
+`repo:fluss-ctrl@361904361/fluss-ctrl@1465269542:environment:<environment>`, with audience
+`sts.amazonaws.com`. A trust written as `repo:fluss-ctrl/fluss-ctrl:...` is refused with
+`Not authorized to perform sts:AssumeRoleWithWebIdentity`.
+
 ## Working on it
 
 `fmt` and `validate` need no credentials:
