@@ -719,7 +719,7 @@ README.md  CONTRIBUTING.md  TESTING.md  CLAUDE.md  PLAN.md  SPEC.md
 
 Tooling: TypeScript `strict`; neostandard + ESLint Stylistic (no Prettier); Lefthook runs lint, gitleaks and commitlint before commit; Conventional Commits referencing the GitHub issue (`feat(api): add grants (#123)`); release-please in manifest mode versions the apps and the published packages (`sdk-ts`, `webhooks`, `cli`) and writes the changelog; Renovate weekly. Branch names: `feat/`, `fix/`, `chore/` + issue number + slug (`feat/123-grants`); PR bodies close the issue (`Closes #123`).
 
-Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure.
+Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure. An `api-v*` release deploys to staging (non-production Cloudflare account, served on its `workers.dev` URL because that account cannot hold `flussctrl.com`), then to production after the production Environment approval: 10% canary smoke-tested by version, then 100%, rolling back to the previous version on any failed smoke. Migrations run just before each Worker upload. Hyperdrive configs are created once per environment with caching disabled; the setting lives on the config, not the binding, so every deploy checks it through the Cloudflare API and stops if caching is on (§9). Runbook: `docs/runbooks/deploy.md`.
 
 ## 17. API lifecycle
 

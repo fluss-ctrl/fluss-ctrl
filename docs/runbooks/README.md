@@ -18,6 +18,8 @@ A runbook is written for someone tired, at 03:00, who did not build the thing. E
 ## Runbooks
 
 - [Database: roles and partitions](database.md)
+- [Deploy the API](deploy.md)
+- [DNS: Terraform changes and the nameserver switch](dns-switch.md)
 
 ## Planned runbooks (SPEC §16)
 
@@ -30,5 +32,4 @@ Each is written by the issue that introduces what it operates.
 - Region add
 - Database failover and failback
 - Break-glass deploy
-- DNS switch
 - Drill log (`drill-log.md`, SPEC §11 item 17)

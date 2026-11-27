@@ -12,7 +12,8 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:dev": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs migrate"
+    "db:migrate:dev": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs migrate",
+    "db:migrate": "node node_modules/drizzle-kit/bin.cjs migrate"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "12.2.2",

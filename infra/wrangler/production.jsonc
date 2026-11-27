@@ -1,0 +1,49 @@
+// API Worker, production (production Cloudflare account, which holds flussctrl.com). Deployed only
+// by .github/workflows/deploy.yml after a tagged release and the production Environment approval,
+// with a gradual rollout; never from a laptop or a session.
+//
+// ${NAME} placeholders are filled from the production Environment's variables by
+// scripts/render-wrangler-config.mjs, which writes apps/api/wrangler.production.generated.jsonc and
+// refuses a config that breaks SPEC §9 (see the checks there). Paths are relative to apps/api.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "fluss-ctrl-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // Wrangler creates and owns this DNS record and certificate; infra/terraform leaves it alone.
+  "routes": [
+    { "pattern": "api.flussctrl.com", "custom_domain": true }
+  ],
+  // Beside Neon us-east-1, not Smart Placement (SPEC §9).
+  "placement": { "region": "aws:us-east-1" },
+  "upload_source_maps": true,
+  "observability": { "enabled": true },
+  "vars": {
+    "ENVIRONMENT": "production",
+    "LOG_LEVEL": "info",
+    // Honoured only on an object's first get() (SPEC §9).
+    "DO_LOCATION_HINT": "enam"
+  },
+  // Must match apps/api/wrangler.jsonc: a class's storage backend cannot change once deployed.
+  "durable_objects": {
+    "bindings": [
+      { "name": "DEVICE_COORDINATOR", "class_name": "DeviceCoordinator" },
+      { "name": "RATE_LIMITER", "class_name": "TokenBucketLimiter" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["DeviceCoordinator", "TokenBucketLimiter"] }
+  ],
+  "kv_namespaces": [
+    { "binding": "CACHE", "id": "${KV_CACHE_ID}" }
+  ],
+  // The API's database binding. Query caching is OFF on this Hyperdrive config (SPEC §9): the
+  // setting lives on the config, not here, so the deploy checks it through the Cloudflare API
+  // (scripts/check-hyperdrive.mjs) and stops if caching is on. Never point this at a cached config.
+  "hyperdrive": [
+    { "binding": "HYPERDRIVE", "id": "${HYPERDRIVE_ID}" }
+  ]
+}

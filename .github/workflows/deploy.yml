@@ -1,0 +1,133 @@
+# Deploys an API release (SPEC §16 "Environments", PLAN §8 "Release", #10): staging first, then
+# production behind the production Environment's required reviewer, each a Wrangler gradual rollout
+# with smoke tests and automatic rollback (scripts/deploy-worker.mjs). Runbook: docs/runbooks/deploy.md.
+#
+# Runs on an `api-v*` tag only. release-please creates tags with the automatic token, which cannot
+# start a tag-push workflow, so release-please.yml dispatches this workflow at the new tag instead;
+# a tag pushed by hand starts it too. A manual run must be started on an `api-v*` tag.
+#
+# Per Environment (staging, production): secrets CLOUDFLARE_API_TOKEN and DATABASE_URL (owner role,
+# direct connection); variables CLOUDFLARE_ACCOUNT_ID, API_BASE_URL, KV_CACHE_ID and HYPERDRIVE_ID.
+name: Deploy API
+
+on:
+  push:
+    tags: ['api-v*']
+  workflow_dispatch:
+    inputs:
+      full_deploy:
+        description: Use `wrangler deploy` (100%, no canary) to apply a Durable Object migration. See docs/runbooks/deploy.md.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one half-way through a rollout.
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+env:
+  TURBO_TELEMETRY_DISABLED: '1'
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  release:
+    name: Check the release tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - id: tag
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ ! "$REF" =~ ^refs/tags/api-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Deploys run only from an api-vX.Y.Z tag, not $REF."
+            exit 1
+          fi
+          echo "tag=${REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+  staging:
+    name: Staging
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: staging
+      url: ${{ vars.API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Render the Wrangler config
+        env:
+          KV_CACHE_ID: ${{ vars.KV_CACHE_ID }}
+          HYPERDRIVE_ID: ${{ vars.HYPERDRIVE_ID }}
+        run: node scripts/render-wrangler-config.mjs staging
+      - name: Check Hyperdrive query caching is off
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          HYPERDRIVE_ID: ${{ vars.HYPERDRIVE_ID }}
+        run: node scripts/check-hyperdrive.mjs
+      # Expand/contract migrations (SPEC §5), so the running version keeps working on the new schema
+      # and a rollback below never needs a down-migration.
+      - name: Migrate the staging database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pnpm db:migrate
+      - name: Deploy (100%, smoke, rollback on failure)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          TAG: ${{ needs.release.outputs.tag }}
+          FULL_DEPLOY: ${{ inputs.full_deploy && '--full-deploy' || '' }}
+        # Staging has no traffic to split, so the new version goes straight to 100%.
+        run: |
+          node scripts/deploy-worker.mjs --config apps/api/wrangler.staging.generated.json \
+            --base-url "$API_BASE_URL" --canary 100 --message "$TAG" $FULL_DEPLOY
+
+  production:
+    name: Production
+    needs: [release, staging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Waits for the production Environment's required reviewer before any step runs.
+    environment:
+      name: production
+      url: ${{ vars.API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Render the Wrangler config
+        env:
+          KV_CACHE_ID: ${{ vars.KV_CACHE_ID }}
+          HYPERDRIVE_ID: ${{ vars.HYPERDRIVE_ID }}
+        run: node scripts/render-wrangler-config.mjs production
+      - name: Check Hyperdrive query caching is off
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          HYPERDRIVE_ID: ${{ vars.HYPERDRIVE_ID }}
+        run: node scripts/check-hyperdrive.mjs
+      - name: Migrate the production database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: pnpm db:migrate
+      - name: Gradual rollout (10% canary, smoke, 100%, smoke, rollback on failure)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          TAG: ${{ needs.release.outputs.tag }}
+          FULL_DEPLOY: ${{ inputs.full_deploy && '--full-deploy' || '' }}
+        run: |
+          node scripts/deploy-worker.mjs --config apps/api/wrangler.production.generated.json \
+            --base-url "$API_BASE_URL" --canary 10 --message "$TAG" $FULL_DEPLOY

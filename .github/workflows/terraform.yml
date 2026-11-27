@@ -1,0 +1,139 @@
+# Terraform for DNS (infra/terraform; SPEC §16, §21.3; #10). Plan on every PR that touches it, in
+# the preview Environment with the read-only role and token. Apply only on main, in the production
+# Environment, so it waits for the required reviewer; the apply runs the plan it just made, nothing
+# else. Never run plan or apply with real credentials outside this workflow (CLAUDE.md).
+#
+# Needs: repo variables TF_STATE_BUCKET, TF_STATE_REGION, CLOUDFLARE_DNS_ACCOUNT_ID,
+# CLOUDFLARE_ZONE_ID; AWS_TF_PLAN_ROLE_ARN + secret CLOUDFLARE_DNS_API_TOKEN in preview;
+# AWS_TF_APPLY_ROLE_ARN + secret CLOUDFLARE_DNS_API_TOKEN in production, which must allow `main`.
+name: Terraform (DNS)
+
+on:
+  pull_request:
+    paths:
+      - infra/terraform/**
+      - .github/workflows/terraform.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/terraform/**
+      - .github/workflows/terraform.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: terraform-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  TF_IN_AUTOMATION: '1'
+  TF_INPUT: '0'
+  TERRAFORM_VERSION: 1.17.2
+
+jobs:
+  plan:
+    name: terraform plan
+    # Fork PRs get no secrets or OIDC token, so there is nothing to plan with.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: preview
+    permissions:
+      contents: read
+      id-token: write # OIDC to the read-only AWS role
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
+      TF_VAR_aws_region: ${{ vars.TF_STATE_REGION }}
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_DNS_ACCOUNT_ID }}
+      TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_TF_PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.TF_STATE_REGION }}
+          role-session-name: terraform-plan-${{ github.run_id }}
+      - run: terraform fmt -check -recursive -diff
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+        run: terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$TF_STATE_REGION"
+      - run: terraform validate
+      # No state lock: the plan role reads state only, and a PR plan never writes it.
+      - name: terraform plan
+        run: |
+          terraform plan -lock=false -no-color | tee plan.txt
+          {
+            echo '### terraform plan'
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    name: terraform apply
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # Waits for the production Environment's required reviewer before any step runs.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # OIDC to the apply role
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_DNS_API_TOKEN }}
+      TF_VAR_aws_region: ${{ vars.TF_STATE_REGION }}
+      TF_VAR_cloudflare_account_id: ${{ vars.CLOUDFLARE_DNS_ACCOUNT_ID }}
+      TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@45666896f5d8e0f10ae255413f3a4cdd03bdc8f5 # v6.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_TF_APPLY_ROLE_ARN }}
+          aws-region: ${{ vars.TF_STATE_REGION }}
+          role-session-name: terraform-apply-${{ github.run_id }}
+      - name: terraform init
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          TF_STATE_REGION: ${{ vars.TF_STATE_REGION }}
+        run: terraform init -backend-config="bucket=$TF_STATE_BUCKET" -backend-config="region=$TF_STATE_REGION"
+      - name: terraform plan
+        run: |
+          terraform plan -no-color -out=tfplan | tee plan.txt
+          {
+            echo '### terraform plan (applied below)'
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # Applies exactly the saved plan; the plan file never leaves this job.
+      - run: terraform apply -no-color tfplan
+      - name: Nameservers
+        run: |
+          {
+            echo '### Nameservers'
+            echo '```'
+            terraform output -no-color
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

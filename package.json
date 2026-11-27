@@ -19,7 +19,8 @@
     "typecheck": "tsc -p tsconfig.json && turbo run typecheck",
     "openapi": "node scripts/not-yet-implemented.mjs openapi \"OpenAPI generation from routes\" 7",
     "db:generate": "pnpm --filter @flussctrl/db db:generate",
-    "db:migrate:dev": "pnpm --filter @flussctrl/db db:migrate:dev"
+    "db:migrate:dev": "pnpm --filter @flussctrl/db db:migrate:dev",
+    "db:migrate": "pnpm --filter @flussctrl/db db:migrate"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.4",

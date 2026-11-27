@@ -2,6 +2,8 @@
 // migrations/README.md before committing one. `pnpm db:migrate:dev` applies migrations to
 // $DATABASE_URL: the owner role over a direct connection (not Hyperdrive), for a local database or
 // your own Neon dev branch. Copy .env.example; never point it at staging or production.
+// `pnpm db:migrate` is the same without the .env file: only the deploy workflow runs it against
+// staging and production (.github/workflows/deploy.yml, #10).
 import { defineConfig } from 'drizzle-kit'
 
 const url = process.env.DATABASE_URL
