@@ -1,0 +1,293 @@
+# Preview deploy per pull request (issue #9; PLAN §7 Phase 0; SPEC §16 "Environments").
+#
+# On every push to a PR from this repository: a Neon branch with the migrations applied, the API
+# deployed as the PR's own Worker on workers.dev, a /health smoke, and one PR comment with the URL
+# and the smoke result. When the PR closes, the Worker, its KV namespace and its Neon branch go.
+#
+# Runs in the `preview` GitHub Environment, the only place these secrets live: CLOUDFLARE_API_TOKEN
+# and NEON_API_KEY (secrets), CLOUDFLARE_ACCOUNT_ID and NEON_PROJECT_ID (variables), all for the
+# non-production accounts. PRs from forks and from Dependabot get no secrets, so they get no preview.
+# Runbook: docs/runbooks/preview-environments.md.
+#
+# Each PR gets its own Worker, not a preview version of a shared one: Cloudflare gives no preview
+# URLs to Workers with Durable Objects (see scripts/preview-wrangler-config.mjs).
+name: Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: read
+
+# One preview run per PR at a time, never cancelled half-way: a cancelled deploy could leave a
+# Worker without its comment, and the close job must run after the last deploy, not beside it.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  TURBO_TELEMETRY_DISABLED: '1'
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  CF_API: https://api.cloudflare.com/client/v4
+  NEON_API: https://console.neon.tech/api/v2
+
+jobs:
+  deploy:
+    name: Preview deploy and smoke
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: preview
+      url: ${{ steps.deploy.outputs.url }}
+    permissions:
+      contents: read
+      pull-requests: write # the preview comment
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+      # Optional. Unset means the branch's only database (and its owner role runs the migrations).
+      NEON_DATABASE_NAME: ${{ vars.NEON_DATABASE_NAME }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+
+      - name: Check the preview configuration
+        run: |
+          missing=0
+          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NEON_API_KEY NEON_PROJECT_ID; do
+            if [ -z "${!name}" ]; then echo "::error::$name is not set in the preview environment"; missing=1; fi
+          done
+          exit "$missing"
+
+      # Neon branch preview/pr-<n>, created on the first push and reused after. It expires after
+      # 14 days as a backstop in case the close job never runs. The connection string is masked
+      # before anything can print it and never leaves this step.
+      - name: Neon branch and migrations
+        id: neon
+        run: |
+          set -euo pipefail
+          neon () { curl -fsS --retry 3 -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"; }
+          branch_name="preview/pr-$PR_NUMBER"
+
+          branch_id=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/branches" --data-urlencode "search=$branch_name" \
+            | jq -r --arg n "$branch_name" '.branches[] | select(.name == $n) | .id' | head -n1)
+          if [ -z "$branch_id" ]; then
+            expires_at=$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)
+            body=$(jq -n --arg n "$branch_name" --arg e "$expires_at" \
+              '{branch: {name: $n, expires_at: $e}, endpoints: [{type: "read_write"}]}')
+            branch_id=$(neon -X POST -H 'Content-Type: application/json' -d "$body" \
+              "$NEON_API/projects/$NEON_PROJECT_ID/branches" | jq -r '.branch.id')
+            echo "Created Neon branch $branch_name ($branch_id)"
+          else
+            echo "Reusing Neon branch $branch_name ($branch_id)"
+          fi
+
+          for _ in $(seq 1 60); do
+            state=$(neon "$NEON_API/projects/$NEON_PROJECT_ID/branches/$branch_id" | jq -r '.branch.current_state')
+            [ "$state" = "ready" ] && break
+            sleep 5
+          done
+          [ "$state" = "ready" ] || { echo "::error::Neon branch $branch_name is $state, not ready"; exit 1; }
+
+          dbs=$(neon "$NEON_API/projects/$NEON_PROJECT_ID/branches/$branch_id/databases")
+          if [ -n "${NEON_DATABASE_NAME:-}" ]; then
+            db=$(jq -c --arg n "$NEON_DATABASE_NAME" '.databases[] | select(.name == $n)' <<<"$dbs")
+          elif [ "$(jq '.databases | length' <<<"$dbs")" = "1" ]; then
+            db=$(jq -c '.databases[0]' <<<"$dbs")
+          else
+            echo "::error::The Neon branch has several databases; set NEON_DATABASE_NAME in the preview environment"; exit 1
+          fi
+          [ -n "$db" ] || { echo "::error::Database $NEON_DATABASE_NAME not found on the Neon branch"; exit 1; }
+          db_name=$(jq -r '.name' <<<"$db")
+          role_name=$(jq -r '.owner_name' <<<"$db")
+
+          # The owner role over a direct (unpooled) connection, as SPEC §5 requires for migrations.
+          uri=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/connection_uri" \
+            --data-urlencode "branch_id=$branch_id" --data-urlencode "database_name=$db_name" \
+            --data-urlencode "role_name=$role_name" --data-urlencode "pooled=false" | jq -r '.uri')
+          password=$(node -e 'console.log(new URL(process.argv[1]).password)' "$uri")
+          echo "::add-mask::$password"
+          password=$(node -e 'console.log(decodeURIComponent(process.argv[1]))' "$password")
+          echo "::add-mask::$password"
+          echo "::add-mask::$uri"
+          # postgres.js sends unknown URL parameters to the server as settings, and Postgres refuses
+          # channel_binding, so keep only sslmode.
+          DATABASE_URL=$(node -e 'const u = new URL(process.argv[1]); u.search = ""; u.searchParams.set("sslmode", "require"); console.log(u.href)' "$uri")
+          echo "::add-mask::$DATABASE_URL"
+          export DATABASE_URL
+
+          pnpm db:migrate
+
+          echo "branch=$branch_name" >> "$GITHUB_OUTPUT"
+          echo "database=$db_name" >> "$GITHUB_OUTPUT"
+
+      # The PR's own KV namespace for the CACHE binding, found by title or created.
+      - name: KV namespace
+        id: kv
+        run: |
+          set -euo pipefail
+          cf () { curl -fsS --retry 3 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"; }
+          title="fluss-ctrl-api-pr-$PR_NUMBER-cache"
+          id=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
+            | jq -r --arg t "$title" '.result[] | select(.title == $t) | .id' | head -n1)
+          if [ -z "$id" ]; then
+            id=$(cf -X POST -H 'Content-Type: application/json' -d "$(jq -n --arg t "$title" '{title: $t}')" \
+              "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces" | jq -r '.result.id')
+            echo "Created KV namespace $title"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy the preview Worker
+        id: deploy
+        env:
+          KV_ID: ${{ steps.kv.outputs.id }}
+        run: |
+          set -euo pipefail
+          node scripts/preview-wrangler-config.mjs --pr "$PR_NUMBER" --kv-id "$KV_ID" --out apps/api/wrangler.preview.json
+          cd apps/api
+          pnpm exec wrangler deploy --config wrangler.preview.json 2>&1 | tee "$RUNNER_TEMP/deploy.log"
+          url=$(grep -oE 'https://fluss-ctrl-api-pr-[0-9]+\.[a-z0-9-]+\.workers\.dev' "$RUNNER_TEMP/deploy.log" | head -n1)
+          [ -n "$url" ] || { echo "::error::No workers.dev URL in the deploy output. Is the account's workers.dev subdomain set up?"; exit 1; }
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      # Minimal smoke (SPEC §11): /health answers 200 with {"status":"ok"} and an X-Request-Id.
+      # A new workers.dev name can take a minute to resolve, so it retries for up to three.
+      - name: Smoke /health
+        id: smoke
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        run: |
+          set -uo pipefail
+          for attempt in $(seq 1 18); do
+            code=$(curl -sS -o "$RUNNER_TEMP/health.json" -D "$RUNNER_TEMP/health.headers" -w '%{http_code}' "$PREVIEW_URL/health" || true)
+            if [ "$code" = "200" ] \
+              && jq -e '.status == "ok"' "$RUNNER_TEMP/health.json" >/dev/null 2>&1 \
+              && grep -qi '^x-request-id: req_' "$RUNNER_TEMP/health.headers"; then
+              echo "Smoke passed on attempt $attempt: GET /health → 200 {\"status\":\"ok\"}"
+              exit 0
+            fi
+            echo "Attempt $attempt: HTTP $code"
+            sleep 10
+          done
+          echo "::error::Smoke failed: GET $PREVIEW_URL/health did not return 200 {\"status\":\"ok\"} with an X-Request-Id"
+          cat "$RUNNER_TEMP/health.json" 2>/dev/null || true
+          exit 1
+
+      - name: Post or update the preview comment
+        if: always()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+          NEON_BRANCH: ${{ steps.neon.outputs.branch }}
+          NEON_OUTCOME: ${{ steps.neon.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        with:
+          script: |
+            const marker = '<!-- preview-deploy -->'
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+            const run = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`
+            const sha = context.payload.pull_request.head.sha.slice(0, 7)
+            const e = process.env
+            const icon = (o) => ({ success: '✅ passed', failure: '❌ failed', skipped: '⏭️ not run', cancelled: '⏹️ cancelled' })[o] ?? `⚠️ ${o || 'not run'}`
+            const body = [
+              marker,
+              '### Preview',
+              '',
+              '| | |',
+              '|---|---|',
+              `| URL | ${e.PREVIEW_URL ? e.PREVIEW_URL : '_not deployed_'} |`,
+              `| Commit | \`${sha}\` |`,
+              `| Neon branch + migrations | ${icon(e.NEON_OUTCOME)}${e.NEON_BRANCH ? ` (\`${e.NEON_BRANCH}\`)` : ''} |`,
+              `| Worker deploy | ${icon(e.DEPLOY_OUTCOME)} |`,
+              `| Smoke (\`GET /health\`) | ${icon(e.SMOKE_OUTCOME)} |`,
+              '',
+              `[Workflow run and smoke log](${run}). The preview, its KV namespace and its Neon branch are deleted when this PR closes.`,
+            ].join('\n')
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 })
+            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.startsWith(marker))
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body })
+            }
+
+  cleanup:
+    name: Remove the preview
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: preview
+    permissions:
+      contents: read
+      pull-requests: write # update the preview comment
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
+      NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
+    steps:
+      # Each delete is a no-op when the thing was never created, so a PR that never got a preview
+      # closes cleanly.
+      - name: Delete the Worker, its KV namespace and its Neon branch
+        run: |
+          set -euo pipefail
+          cf () { curl -fsS --retry 3 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"; }
+          neon () { curl -fsS --retry 3 -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"; }
+          worker="fluss-ctrl-api-pr-$PR_NUMBER"
+
+          # force=true also removes the Worker's Durable Object namespaces and their storage.
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$worker?force=true")
+          case "$code" in
+            200) echo "Deleted Worker $worker" ;;
+            404) echo "No Worker $worker" ;;
+            *) echo "::error::Deleting Worker $worker returned HTTP $code"; exit 1 ;;
+          esac
+
+          title="$worker-cache"
+          kv_id=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
+            | jq -r --arg t "$title" '.result[] | select(.title == $t) | .id' | head -n1)
+          if [ -n "$kv_id" ]; then
+            cf -X DELETE "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$kv_id" > /dev/null
+            echo "Deleted KV namespace $title"
+          else
+            echo "No KV namespace $title"
+          fi
+
+          branch_name="preview/pr-$PR_NUMBER"
+          branch_id=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/branches" --data-urlencode "search=$branch_name" \
+            | jq -r --arg n "$branch_name" '.branches[] | select(.name == $n) | .id' | head -n1)
+          if [ -n "$branch_id" ]; then
+            neon -X DELETE "$NEON_API/projects/$NEON_PROJECT_ID/branches/$branch_id" > /dev/null
+            echo "Deleted Neon branch $branch_name"
+          else
+            echo "No Neon branch $branch_name"
+          fi
+
+      - name: Mark the preview comment as removed
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const marker = '<!-- preview-deploy -->'
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+            const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number, per_page: 100 })
+            const existing = comments.find((c) => c.user?.type === 'Bot' && c.body?.startsWith(marker))
+            if (existing) {
+              const body = `${marker}\n### Preview\n\nRemoved when the PR closed: the Worker, its KV namespace and its Neon branch are deleted.`
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
+            }

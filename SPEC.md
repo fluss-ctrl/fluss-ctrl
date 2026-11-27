@@ -712,7 +712,7 @@ Phasing: Phase 2 ships the `/v1/admin/*` endpoints a beta needs (org list and de
 /docs/security/threat-model.md
 README.md  CONTRIBUTING.md  TESTING.md  CLAUDE.md  PLAN.md  SPEC.md
 .github/  pull_request_template.md, CODEOWNERS, workflows (ci, security, dependency-review,
-          release-please, claude-review, deploy)
+          release-please, preview, claude-review, deploy)
 .devcontainer/  lefthook.yml  commitlint.config.js  renovate.json  eslint.config.js (neostandard)
 .git-blame-ignore-revs  release-please-config.json
 ```
@@ -720,6 +720,8 @@ README.md  CONTRIBUTING.md  TESTING.md  CLAUDE.md  PLAN.md  SPEC.md
 Tooling: TypeScript `strict`; neostandard + ESLint Stylistic (no Prettier); Lefthook runs lint, gitleaks and commitlint before commit; Conventional Commits referencing the GitHub issue (`feat(api): add grants (#123)`); release-please in manifest mode versions the apps and the published packages (`sdk-ts`, `webhooks`, `cli`) and writes the changelog; Renovate weekly. Branch names: `feat/`, `fix/`, `chore/` + issue number + slug (`feat/123-grants`); PR bodies close the issue (`Closes #123`).
 
 Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure.
+
+A `preview` is one Worker per PR (`fluss-ctrl-api-pr-<n>` on workers.dev, in the non-production Cloudflare account) with its own KV namespace and Neon branch (`preview/pr-<n>`, migrations applied), created by `preview.yml` on each push and deleted when the PR closes; the Neon branch also expires after 14 days. It is a separate Worker rather than a preview version because Cloudflare gives no preview URLs to Workers with Durable Objects, and it keeps each PR's Durable Object storage apart. A `GET /health` smoke runs after each deploy and its result is posted on the PR. Previews hold no customer data and are never promoted; staging and production are built from `main` and release tags.
 
 ## 17. API lifecycle
 

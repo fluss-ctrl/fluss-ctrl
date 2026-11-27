@@ -12,15 +12,15 @@ fast-check property tests; time-dependent code uses the injected clock; no `.ski
 | 3 | Provider conformance (simulator) | Vitest (`packages/conformance`) | `pnpm test:unit` | skeleton in #8 |
 | 4 | Integration (real Postgres) | Vitest + Testcontainers | `pnpm test:integration` (Docker) | ✅ runs in CI (`integration` job); no suites until #5 |
 | 4 | Integration (Cloudflare bindings: Durable Objects, KV, Queues) | Vitest + `@cloudflare/vitest-plugin` (Miniflare/workerd) | `pnpm test:unit` (no Docker) | ✅ every `apps/api` test runs inside workerd with the bindings from `apps/api/wrangler.jsonc`; remote bindings are off |
-| 5 | E2E against the PR preview | Playwright | `pnpm test:e2e` (`$PREVIEW_URL`) | not yet implemented (#9) |
-| 6 | Smoke (end of every deploy) | the Playwright suite | run by the deploy workflow | #9, #10 |
+| 5 | E2E against the PR preview | Playwright | `pnpm test:e2e` (`$PREVIEW_URL`) | Phase 1; the per-PR preview it runs against exists (`preview.yml`, #9) |
+| 6 | Smoke (end of every deploy) | the Playwright suite | run by the deploy workflow | ✅ preview: `GET /health` in `preview.yml`, result in the PR's preview comment (#9); the Playwright smoke replaces it in Phase 1; staging and production in #10 |
 | 7 | Synthetic monitoring | OpenStatus, scheduled GitHub Action | none locally | later phase |
 | 8 | Load | k6 | before each phase gate | later phase |
 | 9 | Chaos | scripted scenarios | none locally | later phase |
 | 10 | Security | Semgrep CE, gitleaks, dependency review, ZAP | gitleaks runs in the pre-commit hook; the rest in CI | ✅ Semgrep CE + gitleaks (`security.yml`), dependency review (`dependency-review.yml`); ZAP needs the preview (#9) |
 | 11 | Regression | any layer above | — | every bug fix |
 | 12 | Migrations | squawk, previous release's suite | CI | ✅ `squawk` job lints changed `packages/db/**.sql` (no-op until #5); previous-release suite later |
-| 13 | Docs as tests | quickstart snippets | `pnpm test:docs` (`$PREVIEW_URL`) | not yet implemented (#9) |
+| 13 | Docs as tests | quickstart snippets | `pnpm test:docs` (`$PREVIEW_URL`) | not yet implemented; arrives with the first quickstart (Phase 1) |
 | 15 | Architecture | dependency-cruiser | `pnpm lint` (runs `pnpm lint:deps`) | ✅ routes → core → db; providers never import db; only `apps/api/src/platform` imports `cloudflare:*` (plus an ESLint rule on the ambient binding types) |
 
 Items 14 (restore drill), 16 (portability), 17 (DR drills), 18 (hardware canary) and 19 (vendor
@@ -28,7 +28,10 @@ contract drift) are scheduled jobs or later-phase work and have no local command
 
 ## CI
 
-Workflows live in `.github/workflows/` and use no secret other than the automatic `GITHUB_TOKEN`.
+Workflows live in `.github/workflows/`. `ci.yml`, `security.yml`, `dependency-review.yml` and
+`release-please.yml` use no secret other than the automatic `GITHUB_TOKEN`; `preview.yml` reads the
+`preview` Environment and `claude-review.yml` reads `ANTHROPIC_API_KEY`
+([runbook](docs/runbooks/preview-environments.md)).
 
 | Workflow | Runs on | Jobs |
 |---|---|---|
@@ -36,11 +39,14 @@ Workflows live in `.github/workflows/` and use no secret other than the automati
 | `security.yml` | PRs, pushes to `main` | `semgrep` (Semgrep CE, fails on ERROR severity), `gitleaks` (full history, any finding fails) |
 | `dependency-review.yml` | PRs | GitHub dependency review, fails on high or critical |
 | `release-please.yml` | pushes to `main` | opens or updates the release PR (manifest mode; no publish step) |
+| `preview.yml` | PRs from this repository (not forks or Dependabot) | `deploy`: Neon branch `preview/pr-<n>` with migrations, the API as Worker `fluss-ctrl-api-pr-<n>` on workers.dev, `GET /health` smoke, one PR comment with the URL and results; `cleanup` on close deletes the Worker, its KV namespace and the Neon branch |
+| `claude-review.yml` | non-draft PRs from this repository | `Claude review`: Claude Code reviews the diff against `CLAUDE.md` and `SPEC.md` and comments; capped per run by `--max-budget-usd`, turns and a timeout; fails only if the review cannot finish |
 
 Every job installs with `pnpm install --frozen-lockfile` through `.github/actions/setup`, which also
 restores the pnpm store and the Turborepo cache (`.turbo/cache`). Actions are pinned by commit SHA
 with the version in a comment; Renovate keeps them current. The `ci` job is the one to require in
-the `main` ruleset, alongside `Semgrep CE`, `gitleaks` and `Dependency review`.
+the `main` ruleset, alongside `Semgrep CE`, `gitleaks` and `Dependency review`; `Claude review` is
+ready to join them (PLAN §3 decision 25).
 
 ## Running a subset
 

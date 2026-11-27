@@ -12,6 +12,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "typecheck": "tsc -p tsconfig.json",
     "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "db:migrate:dev": "node --env-file-if-exists=.env node_modules/drizzle-kit/bin.cjs migrate"
   },
   "devDependencies": {
