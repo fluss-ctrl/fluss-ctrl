@@ -54,7 +54,46 @@ describe('takeTokens', () => {
     expect(() => takeTokens(undefined, policy, 1, Number.NaN)).toThrow(RangeError)
   })
 
-  it('never lets more through than capacity plus refill over any run of calls', () => {
+  // #36: the refill rounds differently from the estimate of the wait, so each of these was still a
+  // hair under `cost` (4.999999999999999 and 1.9999999999999998 tokens) after exactly retryAfterMs.
+  it.each([
+    { capacity: 5, refillPerSecond: 0.01, calls: [[0, 3], [4411, 1], [2102, 1], [1481, 5]] },
+    { capacity: 2, refillPerSecond: 0.01, calls: [[0, 1], [3273, 1], [-3, 1], [78, 1], [0, 2]] },
+  ] as const)('allows a refused call after exactly retryAfterMs, and no sooner (capacity $capacity)', ({ capacity, refillPerSecond, calls }) => {
+    const p = { name: 'regression', capacity, refillPerSecond }
+    let state: TokenBucketState | undefined
+    let now = T0
+    let lastCost = 0
+    let retryAfterMs = 0
+    for (const [gapMs, cost] of calls) {
+      now += gapMs
+      const result = takeTokens(state, p, cost, now)
+      state = result.state
+      lastCost = cost
+      retryAfterMs = result.decision.retryAfterMs
+    }
+    expect(retryAfterMs).toBeGreaterThan(0)
+    expect(takeTokens(state, p, lastCost, now + retryAfterMs).decision.allowed).toBe(true)
+    expect(takeTokens(state, p, lastCost, now + retryAfterMs - 1).decision.allowed).toBe(false)
+  })
+
+  it('still promises a long enough wait when one millisecond is below the precision of the wait', () => {
+    // The estimate (about 222 million years) is short here too, and adding 1 ms to a number that
+    // size leaves it unchanged, so a search that only ever stepped by 1 ms would never end.
+    const glacial = { name: 'glacial', capacity: 7, refillPerSecond: 1e-15 }
+    const { state, decision } = takeTokens({ tokens: 0, updatedAt: T0 }, glacial, 7, T0)
+    expect(decision.allowed).toBe(false)
+    expect(Number.isFinite(decision.retryAfterMs)).toBe(true)
+    expect(takeTokens(state, glacial, 7, T0 + decision.retryAfterMs).decision.allowed).toBe(true)
+  })
+
+  // A fresh random run, then the seeds of the two CI runs that found the examples above (#36). The
+  // seeds replay those runs only while the arbitraries below stay as they are.
+  it.each([
+    { run: 'a random seed', params: {} },
+    { run: 'seed 815970254', params: { seed: 815970254 } },
+    { run: 'seed -327760126', params: { seed: -327760126 } },
+  ])('never lets more through than capacity plus refill over any run of calls ($run)', ({ params }) => {
     fc.assert(fc.property(
       fc.record({ capacity: fc.integer({ min: 1, max: 50 }), refillPerSecond: fc.double({ min: 0.01, max: 20, noNaN: true }) }),
       fc.array(fc.record({ gapMs: fc.integer({ min: -2_000, max: 5_000 }), cost: fc.integer({ min: 1, max: 50 }) }), { maxLength: 60 }),
@@ -84,7 +123,7 @@ describe('takeTokens', () => {
         const budget = first === undefined ? capacity : capacity + ((latest - first) / 1000) * refillPerSecond
         expect(taken).toBeLessThanOrEqual(budget + 1e-9)
       }
-    ))
+    ), params)
   })
 })
 
