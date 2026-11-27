@@ -14,7 +14,9 @@ How an API release reaches staging and production, and what to do when a rollout
 ## Impact
 
 A failed staging deploy blocks the release and nothing else. A failed production canary affects
-about 10% of API requests for the length of the smoke (about a minute at most) before the rollback.
+about 10% of API requests for the length of the smoke before the rollback: seconds when the new
+version answers with an error, up to about 4.5 minutes when requests stall (see step 3 below), plus
+the rollback itself.
 A rollback that itself fails leaves production on whatever split the last step set: declare an
 incident (SPEC §21.6).
 
@@ -38,7 +40,9 @@ run on a laptop is only for the one-time resource creation in "First-time setup"
    previous version back at 100% and fails the job.
    A smoke counts only when `/health` answers `ok` **and** its `version` is the new version id, so
    an answer from the old version (a location the change has not reached) never passes it. Each
-   attempt times out after 10 s; after 18 attempts (about 2.5 minutes) the smoke has failed.
+   attempt times out after 10 s, with 5 s between attempts; after 18 attempts the smoke has failed.
+   That is about 1.5 minutes when each attempt gets a quick wrong answer, and up to about 4.5
+   minutes (18 × 10 s + 17 × 5 s) when every request stalls.
 4. Check: the run summary shows "serves 100%", and `curl -s https://api.flussctrl.com/health`
    answers `{"status":"ok","version":"<the new version id>"}`.
 
@@ -61,8 +65,8 @@ Production changes only through the workflow and its approval, including in reco
    Deployments) lists the versions and their traffic.
 2. Run **Deploy API** by hand: "Use workflow from" = any `api-v*` tag (the Environments allow only
    those), **restore_version** = that id, **restore_environment** = production or staging.
-3. Approve the `production` Environment when asked. The job deploys that version at 100% and
-   smoke-tests that `/health` answers from it. It skips the release deploy entirely.
+3. Approve the `production` Environment when asked. The job checks Hyperdrive caching is off,
+   deploys that version at 100% and smoke-tests that `/health` answers from it. It skips the release deploy entirely.
 4. If its smoke fails, declare an incident (SPEC §21.6).
 
 ## "The current deployment is not one version at 100%"
