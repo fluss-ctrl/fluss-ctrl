@@ -20,6 +20,7 @@ A runbook is written for someone tired, at 03:00, who did not build the thing. E
 - [Database: roles and partitions](database.md)
 - [Deploy the API](deploy.md)
 - [DNS: Terraform changes and the nameserver switch](dns-switch.md)
+- [Preview environments and Claude review](preview-environments.md)
 
 ## Planned runbooks (SPEC §16)
 
