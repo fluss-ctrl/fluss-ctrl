@@ -1,21 +1,24 @@
 import { ApiError, newId, problemDetails, type ErrorCode } from '@flussctrl/core'
-import { Hono, type Context } from 'hono'
+import type { OpenAPIHono } from '@hono/zod-openapi'
+import type { Context } from 'hono'
 import type { ContentfulStatusCode } from 'hono/utils/http-status'
-import { ConfigError, loadEnv, type Env } from './env.ts'
+import type { AppEnv } from './app-env.ts'
+import { ConfigError, loadEnv } from './env.ts'
 import { log } from './log.ts'
-import { createPlatform, type Platform } from './platform/index.ts'
+import { registerComponents } from './openapi-components.ts'
+import { createOpenApiApp, registerRoutes } from './openapi.ts'
+import { createPlatform } from './platform/index.ts'
 
 export { DeviceCoordinator, TokenBucketLimiter } from './platform/index.ts'
-
-type AppEnv = { Bindings: Record<string, unknown>, Variables: { config: Env, platform: Platform, requestId: string } }
 
 function problem (c: Context<AppEnv>, code: ErrorCode, body = problemDetails(code, c.get('requestId'))): Response {
   return c.json(body, body.status as ContentfulStatusCode, { 'Content-Type': 'application/problem+json' })
 }
 
 /** Builds the Worker's app. Tests build their own to mount extra routes before the first request. */
-export function createApp (): Hono<AppEnv> {
-  const app = new Hono<AppEnv>()
+export function createApp (): OpenAPIHono<AppEnv> {
+  const app = createOpenApiApp()
+  registerComponents(app)
 
   // Every response carries X-Request-Id (SPEC §1). It is always generated here, never taken from
   // the caller, so a log search by id finds only our own lines. This runs first so that even a
@@ -36,8 +39,8 @@ export function createApp (): Hono<AppEnv> {
     await next()
   })
 
-  // Shallow liveness check, no auth (SPEC §4 Meta).
-  app.get('/health', (c) => c.json({ status: 'ok' }))
+  // Every documented route (openapi.ts). The generated openapi.json describes exactly these.
+  registerRoutes(app)
 
   app.notFound((c) => problem(c, 'not_found'))
 
