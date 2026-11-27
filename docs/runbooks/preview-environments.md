@@ -56,8 +56,11 @@ free plan allows ten branches per project, so at most about eight PRs can have a
 
 1. Open the run linked from the PR's "Preview" comment. Each row of the comment is one step. If
    the PR has no Preview comment, open Repository → Actions → Preview and filter by the PR's branch:
-   no run at all means the PR is from a fork or Dependabot (no previews by design) or the workflow
-   is disabled; a run whose deploy job was skipped means the PR had already closed when it started.
+   - No run at all: the workflow is disabled.
+   - A run whose deploy job was skipped: the PR is from a fork or Dependabot (no previews by
+     design), or the run is the close event's run, which only removes the preview.
+   - A run whose deploy job ran but skipped every step after "Check the PR is still open": the
+     PR had closed by the time the run started, so nothing was created.
 2. **Check the preview configuration** failed: a secret or variable above is missing from the
    `preview` Environment. Add it (step 3).
 3. **Neon branch and migrations** failed: a `401`/`403` is the key; "not ready" is Neon being slow
