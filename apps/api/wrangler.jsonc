@@ -1,6 +1,6 @@
-// Local development only (`pnpm dev`) and the Workers test pool. Per-environment configs for
-// preview, staging and production live in /infra/wrangler and are applied from CI (#9, #10), never
-// from a session.
+// Local development (`pnpm dev`) and the Workers test pool. PR previews are derived from this file
+// by scripts/preview-wrangler-config.mjs in CI (#9). Staging and production configs live in
+// /infra/wrangler and are applied from CI (#10). None of them is ever deployed from a session.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "fluss-ctrl-api-dev",

@@ -21,6 +21,7 @@
     "openapi:check": "pnpm --filter @flussctrl/api openapi --check",
     "openapi:lint": "spectral lint apps/api/openapi.json --fail-severity warn",
     "db:generate": "pnpm --filter @flussctrl/db db:generate",
+    "db:migrate": "pnpm --filter @flussctrl/db db:migrate",
     "db:migrate:dev": "pnpm --filter @flussctrl/db db:migrate:dev"
   },
   "devDependencies": {
