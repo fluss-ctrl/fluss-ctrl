@@ -2,7 +2,7 @@
 // .github/workflows/deploy.yml after a tagged release, never from a laptop or a session.
 //
 // ${NAME} placeholders are filled from the staging Environment's variables by
-// scripts/render-wrangler-config.mjs, which writes apps/api/wrangler.staging.generated.jsonc and
+// scripts/render-wrangler-config.mjs, which writes apps/api/wrangler.staging.generated.json and
 // refuses a config that breaks SPEC §9 (see the checks there). Paths are relative to apps/api.
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
