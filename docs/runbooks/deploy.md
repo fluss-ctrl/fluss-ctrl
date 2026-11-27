@@ -96,17 +96,26 @@ the older code runs on the newer schema; `db:migrate` finds nothing to do.
 
 Staging lives in the non-production Cloudflare account, production in the production account.
 
-1. KV namespace for the `CACHE` binding:
-   `wrangler kv namespace create fluss-ctrl-<env>-cache`. Save the id as the Environment variable
-   `KV_CACHE_ID`.
-2. Hyperdrive config, **caching disabled** (SPEC §9), pointing at the Hyperdrive login role from
-   `database.md` ("Provision the roles"), not the owner role:
-   `wrangler hyperdrive create fluss-ctrl-<env> --connection-string="<from the secret store>" --caching-disabled`.
-   Save the id as `HYPERDRIVE_ID`. Never enable caching on it: the deploy stops if it is on.
-3. Environment variables: `CLOUDFLARE_ACCOUNT_ID`, `KV_CACHE_ID`, `HYPERDRIVE_ID`, and
+1. KV namespace for the `CACHE` binding: dashboard **Storage & databases → KV → Create**, named
+   `fluss-ctrl-<env>-cache` (or `wrangler kv namespace create fluss-ctrl-<env>-cache`). Save its id
+   as the Environment variable `KV_CACHE_ID`.
+2. The database login role Hyperdrive connects as (`database.md`, "Provision the roles"). On a new
+   database, `fluss_app` does not exist until the first deploy runs the migrations, so do it in two
+   steps, in that database's SQL editor:
+   - now: `CREATE ROLE fluss_api LOGIN PASSWORD '<new password, kept in the secret store>';`
+   - after the first deploy of that environment: `GRANT fluss_app TO fluss_api;`, then the checks in
+     `database.md` step 3.
+   Until the grant, the Worker can connect but read nothing; `/health` does not touch the database,
+   so the first deploy still passes.
+3. Hyperdrive config, **caching disabled** (SPEC §9), on that login role's direct (not pooled)
+   connection string, never the owner role: dashboard **Storage & databases → Hyperdrive → Create
+   configuration**, named `fluss-ctrl-<env>`, then **Settings → Caching → Disable** (or
+   `wrangler hyperdrive create fluss-ctrl-<env> --connection-string="<from the secret store>" --caching-disabled`).
+   Save its id as `HYPERDRIVE_ID`. Never enable caching on it: the deploy stops if it is on.
+4. Environment variables: `CLOUDFLARE_ACCOUNT_ID`, `KV_CACHE_ID`, `HYPERDRIVE_ID`, and
    `API_BASE_URL` (production `https://api.flussctrl.com`; staging the Worker's `workers.dev` URL,
    `https://fluss-ctrl-api-staging.<account subdomain>.workers.dev`).
-4. Environment secrets: `DATABASE_URL` (owner role, direct connection, for migrations) and
+5. Environment secrets: `DATABASE_URL` (owner role, direct connection, for migrations) and
    `CLOUDFLARE_API_TOKEN` scoped to that account with: Workers Scripts Edit, Workers KV Storage
    Read, Hyperdrive Read, Account Settings Read; production also Workers Routes Edit and DNS Edit on
    the `flussctrl.com` zone (for the `api.flussctrl.com` custom domain).
