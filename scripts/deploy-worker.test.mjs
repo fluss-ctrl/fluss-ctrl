@@ -1,6 +1,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
-import { healthy, isFirstDeploy, overrideHeader, parseCanary, parseVersionId, smoke, soleVersion, versionIdFromOutput } from './deploy-worker.mjs'
+import { guarded, healthy, isFirstDeploy, overrideHeader, parseCanary, parseVersionId, smoke, soleVersion, versionIdFromOutput } from './deploy-worker.mjs'
 
 const v1 = '11111111-1111-4111-8111-111111111111'
 const v2 = '22222222-2222-4222-8222-222222222222'
@@ -130,5 +130,20 @@ describe('smoke', () => {
     const stalledBody = async (_url, init) => ({ status: 200, json: () => stall(init.signal) })
     expect(await smoke('https://api.example.test', v2, {}, { attempts: 2, timeoutMs: 20, fetchFn: stalledBody, wait: noWait }))
       .toEqual({ ok: false, detail: 'TimeoutError after 2 attempts' })
+  })
+})
+
+describe('guarded', () => {
+  it('returns the result and skips the failure handler when the action succeeds', () => {
+    const calls = []
+    expect(guarded(() => 'ok', (err) => calls.push(err))).toBe('ok')
+    expect(calls).toEqual([])
+  })
+
+  it('runs the failure handler (the rollback) and rethrows when the deploy command throws', () => {
+    const failure = new Error('wrangler versions deploy: timed out')
+    const restored = []
+    expect(() => guarded(() => { throw failure }, (err) => restored.push(['previous@100%', err]))).toThrow(failure)
+    expect(restored).toEqual([['previous@100%', failure]])
   })
 })

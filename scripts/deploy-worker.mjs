@@ -102,6 +102,20 @@ export async function smoke (baseUrl, expectedVersion, headers = {}, { attempts 
   return { ok: false, detail: `${last} after ${attempts} attempts` }
 }
 
+/**
+ * Runs a traffic change. If it throws (Wrangler can fail after Cloudflare already applied the split,
+ * on a timeout or a dropped connection), `onFailure` runs before the error goes on, so a failed
+ * deploy command gets the same rollback as a failed smoke.
+ */
+export function guarded (action, onFailure) {
+  try {
+    return action()
+  } catch (err) {
+    onFailure(err)
+    throw err
+  }
+}
+
 function wrangler (args, { configPath, outputFile } = {}) {
   const bin = fileURLToPath(new URL('../apps/api/node_modules/.bin/wrangler', import.meta.url))
   return execFileSync(bin, [...args, '--config', configPath], {
@@ -155,7 +169,8 @@ async function main () {
       const target = parseVersionId(values.restore)
       step(`Restoring ${target} at 100%`)
       wrangler(['versions', 'deploy', `${target}@100%`, '--yes', '--message', `restore: ${message}`.slice(0, 100)], opts)
-      const result = await smoke(baseUrl, target, overrideHeader(workerName, target))
+      // No version override: the restored version must answer by routing alone.
+      const result = await smoke(baseUrl, target)
       if (!result.ok) {
         console.error(`::error::Smoke failed after restoring ${target}: ${result.detail}. Declare an incident (docs/runbooks/deploy.md).`)
         process.exit(1)
@@ -196,7 +211,10 @@ async function main () {
 
     if (canary < 100) {
       step(`Canary: ${next} at ${canary}%, ${previous} at ${100 - canary}%`)
-      wrangler(['versions', 'deploy', `${next}@${canary}%`, `${previous}@${100 - canary}%`, '--yes', '--message', `canary: ${message}`.slice(0, 100)], opts)
+      guarded(
+        () => wrangler(['versions', 'deploy', `${next}@${canary}%`, `${previous}@${100 - canary}%`, '--yes', '--message', `canary: ${message}`.slice(0, 100)], opts),
+        (err) => rollback(previous, `Canary deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`),
+      )
       const result = await smoke(baseUrl, next, overrideHeader(workerName, next))
       if (!result.ok) {
         rollback(previous, `Canary smoke failed on ${next}: ${result.detail}`)
@@ -206,8 +224,13 @@ async function main () {
     }
 
     step(`Promoting ${next} to 100%`)
-    wrangler(['versions', 'deploy', `${next}@100%`, '--yes', '--message', message], opts)
-    const result = await smoke(baseUrl, next, overrideHeader(workerName, next))
+    guarded(
+      () => wrangler(['versions', 'deploy', `${next}@100%`, '--yes', '--message', message], opts),
+      (err) => rollback(previous, `Promotion deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`),
+    )
+    // No version override: at 100% every request must reach `next` by routing alone, and
+    // `healthy` fails any answer from another version.
+    const result = await smoke(baseUrl, next)
     if (!result.ok) {
       rollback(previous, `Smoke after promotion failed on ${next}: ${result.detail}`)
       process.exit(1)

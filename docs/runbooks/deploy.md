@@ -36,8 +36,9 @@ run on a laptop is only for the one-time resource creation in "First-time setup"
    smoke-test `/health`. A failed smoke puts the previous version back.
 3. **Production** job waits for the `production` Environment reviewer. Approve it in the run page.
    Same steps, but the new version first gets 10% and is smoke-tested by version id (header
-   `Cloudflare-Workers-Version-Overrides`), then 100% and smoke again. Any failed smoke puts the
-   previous version back at 100% and fails the job.
+   `Cloudflare-Workers-Version-Overrides`), then 100% and smoke again without the header, so the
+   new version must answer by routing alone. Any failed smoke, or a `versions deploy` command that
+   fails part-way, puts the previous version back at 100% and fails the job.
    A smoke counts only when `/health` answers `ok` **and** its `version` is the new version id, so
    an answer from the old version (a location the change has not reached) never passes it. Each
    attempt times out after 10 s, with 5 s between attempts; after 18 attempts the smoke has failed.
