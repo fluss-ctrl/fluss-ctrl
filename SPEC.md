@@ -11,10 +11,10 @@ This spec describes all of v1, but v1 is built in phases (PLAN §7). Build only 
 
 | Phase | Builds |
 |-------|--------|
-| 0–1 (Nov – Dec 2026) | Conventions, tenancy and machine auth (§1–3.2); sites, controllers, devices, groups, subjects, grants, commands with verification, events and webhooks (§4–8, less the later items below); simulator and conformance kit (§10–11); docs and CLI basics |
-| 2 (Jan 2027) | Fluss+ provider (§12) and provider links; Gemini and Nice once specified (§23); unofficial providers once cleared (§22.3); console auth and customer console (§3.3–3.4, §13.1); admin endpoints with `fctl admin` (§13.2); status page |
-| 3 (Feb 2027) | Metering and usage statements (§15); warm standby and circuit breakers (§21); Wiegand bridge once specified (§23) |
-| 4 (Mar 2027) | Emergency modes (§4 Emergency, and every `emergency`, `egress` and `hold` item elsewhere); admin web UI and metrics feed (§13.2); self-serve payment (§15); TypeScript SDK |
+| 0–1 (Nov 2026 – Jan 2027) | Conventions, tenancy and machine auth (§1–3.2); sites, controllers, devices, groups, subjects, grants, commands with verification, events and webhooks (§4–8, less the later items below); simulator and conformance kit (§10–11); docs and CLI basics |
+| 2 (Jan – Feb 2027) | Fluss+ provider (§12) and provider links; Gemini and Nice once specified (§23); unofficial providers once cleared (§22.3); console auth and customer console (§3.3–3.4, §13.1); admin endpoints with `fctl admin` (§13.2); status page |
+| 3 (Feb – Mar 2027) | Metering and usage statements (§15); warm standby and circuit breakers (§21); Wiegand bridge once specified (§23) |
+| 4 (Mar – Apr 2027) | Emergency modes (§4 Emergency, and every `emergency`, `egress` and `hold` item elsewhere); admin web UI and metrics feed (§13.2); self-serve payment (§15); TypeScript SDK |
 | Post-launch | MCP server and delegated OAuth (§3.1, §19); connectors (`POST /connectors`, `lock`/`unlock`); Comb; Postgres-backed platform adapters and break-glass container (§21.3); billing automation (§15); Python and C# SDKs; everything in §20 |
 
 Tables by phase (§5): 0–1 `organisations`, `clients`, `client_secrets`, members (`org_members` only; the Better Auth tables arrive with console auth in Phase 2), `sites`, `providers`, `controllers`, `devices`, `device_groups`, `subjects`, `grants`, `commands`, `events`, `ingested_refs`, `webhook_endpoints`, `webhook_deliveries`, `idempotency_keys`, `audit_log`; 2 `provider_links` and the Better Auth tables; 3 `usage_daily` and the billing columns (`organisations.plan`, `price_per_device_month`, `billing_provider`); 4 `site_emergencies`, `metrics_daily`, `org_notes`, `invoices`, `payments` and the emergency columns (`sites.emergency_config`, `devices.egress`, `grants.emergency_exempt`, `commands.emergency_id`); post-launch `connectors`, `billing_adjustments`.
