@@ -213,7 +213,7 @@ async function main () {
       step(`Canary: ${next} at ${canary}%, ${previous} at ${100 - canary}%`)
       guarded(
         () => wrangler(['versions', 'deploy', `${next}@${canary}%`, `${previous}@${100 - canary}%`, '--yes', '--message', `canary: ${message}`.slice(0, 100)], opts),
-        (err) => rollback(previous, `Canary deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`),
+        (err) => rollback(previous, `Canary deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`)
       )
       const result = await smoke(baseUrl, next, overrideHeader(workerName, next))
       if (!result.ok) {
@@ -226,7 +226,7 @@ async function main () {
     step(`Promoting ${next} to 100%`)
     guarded(
       () => wrangler(['versions', 'deploy', `${next}@100%`, '--yes', '--message', message], opts),
-      (err) => rollback(previous, `Promotion deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`),
+      (err) => rollback(previous, `Promotion deploy command failed for ${next}: ${err instanceof Error ? err.message : String(err)}`)
     )
     // No version override: at 100% every request must reach `next` by routing alone, and
     // `healthy` fails any answer from another version.
