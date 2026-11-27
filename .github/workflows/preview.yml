@@ -60,7 +60,19 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
 
+      # Runs can start out of order, so check the PR's live state rather than the event's action:
+      # a push that starts after the PR closed must not recreate what the close job deleted.
+      - name: Check the PR is still open
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)
+          echo "PR #$PR_NUMBER is $state"
+          echo "open=$([ "$state" = open ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       - name: Check the preview configuration
+        if: steps.live.outputs.open == 'true'
         run: |
           set -uo pipefail
           missing=0
@@ -87,6 +99,7 @@ jobs:
       # 14 days as a backstop in case the close job never runs. The connection string is masked
       # before anything can print it and never leaves this step.
       - name: Neon branch and migrations
+        if: steps.live.outputs.open == 'true'
         id: neon
         run: |
           set -euo pipefail
@@ -154,6 +167,7 @@ jobs:
 
       # The PR's own KV namespace for the CACHE binding, found by title or created.
       - name: KV namespace
+        if: steps.live.outputs.open == 'true'
         id: kv
         run: |
           set -euo pipefail
@@ -165,9 +179,18 @@ jobs:
             fi
             printf '%s' "$out"
           }
+          # The id of the KV namespace with this exact title, searching every page; empty if none.
+          kv_find () {
+            local page=1 res id
+            while :; do
+              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page")
+              id=$(jq -r --arg t "$1" '.result[] | select(.title == $t) | .id' <<<"$res" | head -n1)
+              if [ -n "$id" ] || [ "$(jq '.result | length' <<<"$res")" -lt 100 ]; then printf '%s' "$id"; return; fi
+              page=$((page + 1))
+            done
+          }
           title="fluss-ctrl-api-pr-$PR_NUMBER-cache"
-          id=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
-            | jq -r --arg t "$title" '.result[] | select(.title == $t) | .id' | head -n1)
+          id=$(kv_find "$title")
           if [ -z "$id" ]; then
             id=$(cf -X POST -H 'Content-Type: application/json' -d "$(jq -n --arg t "$title" '{title: $t}')" \
               "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces" | jq -r '.result.id')
@@ -176,6 +199,7 @@ jobs:
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
       - name: Deploy the preview Worker
+        if: steps.live.outputs.open == 'true'
         id: deploy
         env:
           KV_ID: ${{ steps.kv.outputs.id }}
@@ -191,6 +215,7 @@ jobs:
       # Minimal smoke (SPEC §11): /health answers 200 with {"status":"ok"} and an X-Request-Id.
       # A new workers.dev name can take a minute to resolve, so it retries for up to three.
       - name: Smoke /health
+        if: steps.live.outputs.open == 'true'
         id: smoke
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.url }}
@@ -212,7 +237,7 @@ jobs:
           exit 1
 
       - name: Post or update the preview comment
-        if: always()
+        if: always() && steps.live.outputs.open == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           PREVIEW_URL: ${{ steps.deploy.outputs.url }}
@@ -269,9 +294,20 @@ jobs:
       NEON_API_KEY: ${{ secrets.NEON_API_KEY }}
       NEON_PROJECT_ID: ${{ vars.NEON_PROJECT_ID }}
     steps:
+      # A delayed close run must not delete the preview of a PR that has since been reopened.
+      - name: Check the PR is still closed
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .state)
+          echo "PR #$PR_NUMBER is $state"
+          echo "closed=$([ "$state" = closed ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
       # Each delete is a no-op when the thing was never created, so a PR that never got a preview
       # closes cleanly.
       - name: Delete the Worker, its KV namespace and its Neon branch
+        if: steps.live.outputs.closed == 'true'
         run: |
           set -euo pipefail
           # On an HTTP error, print the API's error messages (never a credential) and fail.
@@ -281,6 +317,16 @@ jobs:
               echo "::error::Cloudflare API: $(jq -c '.errors // .' <<<"$out" 2>/dev/null || echo "$out")" >&2; return 1
             fi
             printf '%s' "$out"
+          }
+          # The id of the KV namespace with this exact title, searching every page; empty if none.
+          kv_find () {
+            local page=1 res id
+            while :; do
+              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page")
+              id=$(jq -r --arg t "$1" '.result[] | select(.title == $t) | .id' <<<"$res" | head -n1)
+              if [ -n "$id" ] || [ "$(jq '.result | length' <<<"$res")" -lt 100 ]; then printf '%s' "$id"; return; fi
+              page=$((page + 1))
+            done
           }
           # On an HTTP error, print the API's error message (never a credential) and fail.
           neon () {
@@ -302,8 +348,7 @@ jobs:
           esac
 
           title="$worker-cache"
-          kv_id=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
-            | jq -r --arg t "$title" '.result[] | select(.title == $t) | .id' | head -n1)
+          kv_id=$(kv_find "$title")
           if [ -n "$kv_id" ]; then
             cf -X DELETE "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$kv_id" > /dev/null
             echo "Deleted KV namespace $title"
@@ -322,6 +367,7 @@ jobs:
           fi
 
       - name: Mark the preview comment as removed
+        if: steps.live.outputs.closed == 'true'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |

@@ -54,7 +54,10 @@ free plan allows ten branches per project, so at most about eight PRs can have a
 
 ### 1. Read a failed preview
 
-1. Open the run linked from the PR's "Preview" comment. Each row of the comment is one step.
+1. Open the run linked from the PR's "Preview" comment. Each row of the comment is one step. If
+   the PR has no Preview comment, open Repository → Actions → Preview and filter by the PR's branch:
+   no run at all means the PR is from a fork or Dependabot (no previews by design) or the workflow
+   is disabled; a run whose deploy job was skipped means the PR had already closed when it started.
 2. **Check the preview configuration** failed: a secret or variable above is missing from the
    `preview` Environment. Add it (step 3).
 3. **Neon branch and migrations** failed: a `401`/`403` is the key; "not ready" is Neon being slow
@@ -84,7 +87,10 @@ Check it worked: the PR comment shows every row passed and the URL answers `GET 
 2. Repository → Settings → Environments → `preview` (or Secrets and variables → Actions for the
    repository-level ones) → update the value. Never paste it anywhere else.
 3. Revoke the old one at the provider.
-4. Re-run the preview job on any open PR. Check: the comment shows every row passed.
+4. Check the workflow that uses the secret: for a `preview` secret, re-run the preview job on any
+   open PR and check its comment shows every row passed; for `ANTHROPIC_API_KEY`, re-run the
+   `Claude review` job on any open, non-draft PR and check it passed and posted its
+   "Claude review:" comment.
 
 ### 4. Clean up leftovers
 
@@ -95,7 +101,8 @@ If that is impossible (for example the workflow file changed), delete by hand, b
    Delete. Then Storage & Databases → KV → `fluss-ctrl-api-pr-<n>-cache` → Delete.
 2. Neon → `fluss-ctrl-nonprod` → Branches → `preview/pr-<n>` → Delete.
 
-Only delete names that match a **closed** PR. Never delete the Neon project's default branch.
+Only delete names that match a **closed** PR, unless you are stopping previews entirely
+(Rollback). Never delete the Neon project's default branch.
 
 ### 5. Claude review spend
 
@@ -114,9 +121,13 @@ head, so spend follows the number of ready-for-review pushes.
 
 - A bad workflow change: revert the PR that made it. Existing previews keep running until their PRs
   close.
-- To stop previews entirely without a PR: Repository → Actions → Preview → Disable workflow, then
-  clean up (step 4). Same for Claude review; if it is a required check, remove it from the ruleset
-  first or every PR blocks.
+- To stop previews entirely without a PR: Repository → Actions → Preview → Disable workflow. Closed
+  PRs' leftovers are cleaned up by step 4. Previews of PRs that are still open keep running until
+  those PRs close, and with the workflow disabled their close job will not run, so delete them by
+  hand with the same steps as step 4, by name, once you have decided to stop them (they hold no
+  customer data). Re-enabling the workflow and pushing to an open PR recreates its preview.
+- Claude review: Repository → Actions → Claude review → Disable workflow. If it is a required
+  check, remove it from the ruleset first or every PR blocks.
 
 ## Afterwards
 
