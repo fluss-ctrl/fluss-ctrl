@@ -15,7 +15,9 @@ export interface IdGeneratorDeps {
   randomBytes?: (bytes: Uint8Array<ArrayBuffer>) => void
 }
 
-const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+/** The UUIDv7 part of an id, lower-case hex. Shared with the OpenAPI id schemas (schemas/ids.ts). */
+export const UUID_V7_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}'
+const UUID_V7 = new RegExp(`^${UUID_V7_PATTERN}$`)
 const MAX_COUNTER = 0xfff
 // A fresh millisecond seeds the counter in the lower half, leaving at least 2048 increments.
 const SEED_MASK = 0x7ff
