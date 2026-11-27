@@ -62,11 +62,26 @@ jobs:
 
       - name: Check the preview configuration
         run: |
+          set -uo pipefail
           missing=0
           for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID NEON_API_KEY NEON_PROJECT_ID; do
             if [ -z "${!name}" ]; then echo "::error::$name is not set in the preview environment"; missing=1; fi
           done
-          exit "$missing"
+          [ "$missing" = 0 ] || exit 1
+          # The token must be active and able to see this account. Account-owned and user-owned
+          # tokens verify at different endpoints, so try both before failing.
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          if curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/tokens/verify" | grep -q '^200$' \
+            || curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$CF_API/user/tokens/verify" | grep -q '^200$'; then
+            echo "CLOUDFLARE_API_TOKEN is active"
+          else
+            echo "::error::CLOUDFLARE_API_TOKEN is not an active token (checked as an account token for CLOUDFLARE_ACCOUNT_ID and as a user token)"
+            exit 1
+          fi
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")
+          [ "$code" = 200 ] || { echo "::error::CLOUDFLARE_API_TOKEN cannot list Workers in CLOUDFLARE_ACCOUNT_ID (HTTP $code): wrong account, or missing Workers Scripts permission"; exit 1; }
+          code=$(curl -sS -o /dev/null -w '%{http_code}' "${auth[@]}" "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=1")
+          [ "$code" = 200 ] || { echo "::error::CLOUDFLARE_API_TOKEN cannot list KV namespaces in CLOUDFLARE_ACCOUNT_ID (HTTP $code): missing Workers KV Storage permission"; exit 1; }
 
       # Neon branch preview/pr-<n>, created on the first push and reused after. It expires after
       # 14 days as a backstop in case the close job never runs. The connection string is masked
@@ -75,7 +90,14 @@ jobs:
         id: neon
         run: |
           set -euo pipefail
-          neon () { curl -fsS --retry 3 -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"; }
+          # On an HTTP error, print the API's error message (never a credential) and fail.
+          neon () {
+            local out
+            if ! out=$(curl -sS --retry 3 --fail-with-body -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"); then
+              echo "::error::Neon API: $(jq -r '.message // .' <<<"$out" 2>/dev/null || echo "$out")" >&2; return 1
+            fi
+            printf '%s' "$out"
+          }
           branch_name="preview/pr-$PR_NUMBER"
 
           branch_id=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/branches" --data-urlencode "search=$branch_name" \
@@ -135,7 +157,14 @@ jobs:
         id: kv
         run: |
           set -euo pipefail
-          cf () { curl -fsS --retry 3 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"; }
+          # On an HTTP error, print the API's error messages (never a credential) and fail.
+          cf () {
+            local out
+            if ! out=$(curl -sS --retry 3 --fail-with-body -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"); then
+              echo "::error::Cloudflare API: $(jq -c '.errors // .' <<<"$out" 2>/dev/null || echo "$out")" >&2; return 1
+            fi
+            printf '%s' "$out"
+          }
           title="fluss-ctrl-api-pr-$PR_NUMBER-cache"
           id=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100" \
             | jq -r --arg t "$title" '.result[] | select(.title == $t) | .id' | head -n1)
@@ -245,8 +274,22 @@ jobs:
       - name: Delete the Worker, its KV namespace and its Neon branch
         run: |
           set -euo pipefail
-          cf () { curl -fsS --retry 3 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"; }
-          neon () { curl -fsS --retry 3 -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"; }
+          # On an HTTP error, print the API's error messages (never a credential) and fail.
+          cf () {
+            local out
+            if ! out=$(curl -sS --retry 3 --fail-with-body -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$@"); then
+              echo "::error::Cloudflare API: $(jq -c '.errors // .' <<<"$out" 2>/dev/null || echo "$out")" >&2; return 1
+            fi
+            printf '%s' "$out"
+          }
+          # On an HTTP error, print the API's error message (never a credential) and fail.
+          neon () {
+            local out
+            if ! out=$(curl -sS --retry 3 --fail-with-body -H "Authorization: Bearer $NEON_API_KEY" -H 'Accept: application/json' "$@"); then
+              echo "::error::Neon API: $(jq -r '.message // .' <<<"$out" 2>/dev/null || echo "$out")" >&2; return 1
+            fi
+            printf '%s' "$out"
+          }
           worker="fluss-ctrl-api-pr-$PR_NUMBER"
 
           # force=true also removes the Worker's Durable Object namespaces and their storage.
