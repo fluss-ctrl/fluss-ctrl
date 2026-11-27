@@ -338,33 +338,43 @@ jobs:
           }
           worker="fluss-ctrl-api-pr-$PR_NUMBER"
 
+          # Each deletion runs even if an earlier one failed, so one bad API call leaves as little
+          # behind as possible; the step still fails at the end if any of them did.
+          failed=0
+
           # force=true also removes the Worker's Durable Object namespaces and their storage.
           code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$worker?force=true")
+            "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$worker?force=true") || code=000
           case "$code" in
             200) echo "Deleted Worker $worker" ;;
             404) echo "No Worker $worker" ;;
-            *) echo "::error::Deleting Worker $worker returned HTTP $code"; exit 1 ;;
+            *) echo "::error::Deleting Worker $worker returned HTTP $code"; failed=1 ;;
           esac
 
           title="$worker-cache"
-          kv_id=$(kv_find "$title")
-          if [ -n "$kv_id" ]; then
-            cf -X DELETE "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$kv_id" > /dev/null
+          if ! kv_id=$(kv_find "$title"); then
+            echo "::error::Could not look up KV namespace $title"; failed=1
+          elif [ -z "$kv_id" ]; then
+            echo "No KV namespace $title"
+          elif cf -X DELETE "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces/$kv_id" > /dev/null; then
             echo "Deleted KV namespace $title"
           else
-            echo "No KV namespace $title"
+            echo "::error::Could not delete KV namespace $title"; failed=1
           fi
 
           branch_name="preview/pr-$PR_NUMBER"
-          branch_id=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/branches" --data-urlencode "search=$branch_name" \
-            | jq -r --arg n "$branch_name" '.branches[] | select(.name == $n) | .id' | head -n1)
-          if [ -n "$branch_id" ]; then
-            neon -X DELETE "$NEON_API/projects/$NEON_PROJECT_ID/branches/$branch_id" > /dev/null
+          if ! branch_id=$(neon -G "$NEON_API/projects/$NEON_PROJECT_ID/branches" --data-urlencode "search=$branch_name" \
+            | jq -r --arg n "$branch_name" '.branches[] | select(.name == $n) | .id' | head -n1); then
+            echo "::error::Could not look up Neon branch $branch_name"; failed=1
+          elif [ -z "$branch_id" ]; then
+            echo "No Neon branch $branch_name"
+          elif neon -X DELETE "$NEON_API/projects/$NEON_PROJECT_ID/branches/$branch_id" > /dev/null; then
             echo "Deleted Neon branch $branch_name"
           else
-            echo "No Neon branch $branch_name"
+            echo "::error::Could not delete Neon branch $branch_name"; failed=1
           fi
+
+          exit "$failed"
 
       - name: Mark the preview comment as removed
         if: steps.live.outputs.closed == 'true'
