@@ -183,7 +183,7 @@ jobs:
           kv_find () {
             local page=1 res id
             while :; do
-              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page")
+              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page") || return 1
               id=$(jq -r --arg t "$1" '.result[] | select(.title == $t) | .id' <<<"$res" | head -n1)
               if [ -n "$id" ] || [ "$(jq '.result | length' <<<"$res")" -lt 100 ]; then printf '%s' "$id"; return; fi
               page=$((page + 1))
@@ -322,7 +322,7 @@ jobs:
           kv_find () {
             local page=1 res id
             while :; do
-              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page")
+              res=$(cf "$CF_API/accounts/$CLOUDFLARE_ACCOUNT_ID/storage/kv/namespaces?per_page=100&page=$page") || return 1
               id=$(jq -r --arg t "$1" '.result[] | select(.title == $t) | .id' <<<"$res" | head -n1)
               if [ -n "$id" ] || [ "$(jq '.result | length' <<<"$res")" -lt 100 ]; then printf '%s' "$id"; return; fi
               page=$((page + 1))
