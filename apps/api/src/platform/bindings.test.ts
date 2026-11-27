@@ -24,6 +24,12 @@ describe('loadBindings', () => {
     }
     expect(() => loadBindings(null)).toThrow(ConfigError)
   })
+
+  it('takes an optional version metadata binding and refuses a malformed one', () => {
+    expect(loadBindings({ ...env }).CF_VERSION_METADATA).toBeUndefined()
+    expect(loadBindings({ ...env, CF_VERSION_METADATA: { id: 'v1', tag: '', timestamp: '' } }).CF_VERSION_METADATA?.id).toBe('v1')
+    expect(() => loadBindings({ ...env, CF_VERSION_METADATA: 'v1' })).toThrow(ConfigError)
+  })
 })
 
 describe('createPlatform', () => {
@@ -31,5 +37,6 @@ describe('createPlatform', () => {
     const platform = createPlatform(env)
     expect(await platform.cache.get('nothing-here')).toBeUndefined()
     expect((await platform.rateLimiter({ name: 'platform', capacity: 1, refillPerSecond: 1 }).consume(crypto.randomUUID())).allowed).toBe(true)
+    expect(platform.workerVersion).toBeNull()
   })
 })

@@ -34,19 +34,25 @@ switch keeps mail, verification records and the status page answering. Severity 
 
 ## Switch nameservers to Route 53
 
-1. Confirm it is DNS, not compute: `dig +short NS flussctrl.com @a.gtld-servers.net` returns the
-   Cloudflare nameservers, and `dig flussctrl.com SOA @<a Cloudflare nameserver>` times out or
-   fails from two networks. Check the Cloudflare status page.
+1. Confirm it is DNS, not compute: `dig +noall +authority NS flussctrl.com @a.gtld-servers.net`
+   lists the Cloudflare nameservers (the parent answers with a referral, so they are in the
+   AUTHORITY section), and `dig flussctrl.com SOA @<a Cloudflare nameserver>` times out or fails
+   from two networks. Check the Cloudflare status page.
 2. Get the Route 53 nameservers: the last **terraform apply** run summary ("Nameservers"), or the
    hosted zone in the AWS DNS account console.
 3. Check the secondary is answering and current:
    `dig flussctrl.com SOA @<a Route 53 nameserver>` answers, and each record in `records.tf` answers
    the same there.
-4. DNSSEC: if DS records are set at the registrar for Cloudflare's key, remove them first (Route 53
-   Domains → the domain → DNSSEC keys), or validating resolvers will reject Route 53's answers.
+4. DNSSEC: check `dig +noall +answer DS flussctrl.com @a.gtld-servers.net`. If it returns DS
+   records (Cloudflare's key), validating resolvers would reject Route 53's unsigned answers, so:
+   remove them at the registrar (Route 53 Domains → the domain → DNSSEC keys); repeat the `dig`
+   until the parent returns no DS; then wait out the old DS TTL (shown in that `dig` before removal,
+   usually 86400 s for `.com`) before step 5. If the outage cannot wait that long, accept that
+   validating resolvers fail until it passes, and say so in the incident.
 5. In the registrar account: Route 53 Domains → `flussctrl.com` → Edit name servers → replace them
    with the four Route 53 nameservers.
-6. Check: `dig +short NS flussctrl.com @a.gtld-servers.net` returns the Route 53 set (minutes).
+6. Check: `dig +noall +authority NS flussctrl.com @a.gtld-servers.net` lists the Route 53 set
+   (minutes).
 
 TTL guidance: the `.com` delegation is cached for up to 48 hours (NS TTL 172800), so some resolvers
 keep asking Cloudflare for up to two days. Record TTLs in `records.tf` stay at 300 s or less so a
@@ -54,9 +60,16 @@ change during the incident spreads quickly.
 
 ## Rollback (switch back)
 
-When Cloudflare DNS has been healthy for an hour: set the registrar's nameservers back to the
-Cloudflare set (`cloudflare_name_servers` in the apply summary), restore DS records if DNSSEC was in
-use, and check with `dig` as in step 6. Keep both zones until the 48-hour delegation TTL has passed.
+When Cloudflare DNS has been healthy for an hour:
+
+1. Set the registrar's nameservers back to the Cloudflare set (`cloudflare_name_servers` in the apply
+   summary). Check with `dig` as in step 6.
+2. Keep DNSSEC off for now. Resolvers may still hold the Route 53 delegation for up to 48 hours, and
+   a DS for Cloudflare's key would make those Route 53 answers fail validation.
+3. After the 48-hour delegation TTL has passed, and only if DNSSEC was in use before: confirm
+   Cloudflare is signing (`dig +dnssec flussctrl.com SOA @<a Cloudflare nameserver>` shows RRSIG),
+   then add Cloudflare's DS back at the registrar.
+4. Keep both zones; the Route 53 secondary stays pre-provisioned for the next time.
 
 ## Afterwards
 

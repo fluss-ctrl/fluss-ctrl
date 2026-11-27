@@ -16,6 +16,12 @@ describe('GET /health', () => {
     expect(await res.json()).toEqual({ status: 'ok' })
   })
 
+  it('names the serving Worker version when the binding is there', async () => {
+    const version = '22222222-2222-4222-8222-222222222222'
+    const res = await app.request('/health', {}, { ...goodEnv, CF_VERSION_METADATA: { id: version, tag: '', timestamp: '' } })
+    expect(await res.json()).toEqual({ status: 'ok', version })
+  })
+
   it('refuses to serve when the config is invalid', async () => {
     const log = vi.spyOn(console, 'error').mockImplementation(() => {})
     const res = await app.request('/health', {}, { ENVIRONMENT: 'prod' })

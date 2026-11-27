@@ -18,6 +18,12 @@ locals {
   mirrored_records = {
     # spf = { name = "@", type = "TXT", ttl = 300, content = "v=spf1 -all" }
   }
+
+  # Route 53 holds every value of one name and type in a single record set, so entries that share
+  # them (two MX hosts, several TXT values) are grouped into one aws_route53_record.
+  route53_record_sets = {
+    for k, v in local.mirrored_records : "${v.name}/${v.type}" => v...
+  }
 }
 
 resource "cloudflare_dns_record" "mirrored" {
@@ -35,16 +41,22 @@ resource "cloudflare_dns_record" "mirrored" {
 }
 
 resource "aws_route53_record" "mirrored" {
-  for_each = local.mirrored_records
+  for_each = local.route53_record_sets
 
   zone_id = aws_route53_zone.secondary.zone_id
-  name    = each.value.name == "@" ? local.domain : "${each.value.name}.${local.domain}"
-  type    = each.value.type
-  ttl     = each.value.ttl
-  # Route 53 takes the MX priority inside the value, and TXT values quoted.
+  name    = each.value[0].name == "@" ? local.domain : "${each.value[0].name}.${local.domain}"
+  type    = each.value[0].type
+  ttl     = each.value[0].ttl
+  # Route 53 takes the MX priority inside the value. TXT values go in unquoted: the provider adds
+  # the quotes.
   records = [
-    each.value.type == "MX" ? "${each.value.priority} ${each.value.content}" :
-    each.value.type == "TXT" ? "\"${each.value.content}\"" :
-    each.value.content
+    for r in each.value : r.type == "MX" ? "${r.priority} ${r.content}" : r.content
   ]
+
+  lifecycle {
+    precondition {
+      condition     = length(distinct([for r in each.value : r.ttl])) == 1
+      error_message = "Records sharing a name and type (${each.key}) must share one TTL: Route 53 keeps them in one record set."
+    }
+  }
 }

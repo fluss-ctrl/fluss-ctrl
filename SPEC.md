@@ -231,7 +231,7 @@ Two modes, one active emergency per site at a time. Both are control-room featur
 - `GET /webhooks/{id}/deliveries?status=`, `POST /webhooks/deliveries/{id}/replay`.
 
 ### Meta
-- `GET /health` (no auth; shallow), `GET /health/deep` (ops; DB + providers).
+- `GET /health` (no auth; shallow): `{ "status": "ok", "version": "<Worker version id>" }` (`version` is absent where no version exists, such as local dev; the deploy smoke test uses it to tell a new version from the old one). `GET /health/deep` (ops; DB + providers).
 - `GET /providers` → provider list with capability summaries and onboarding mode.
 - `GET /usage` → current period device-months and command counts. (Phase 3.)
 

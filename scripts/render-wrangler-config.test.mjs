@@ -49,6 +49,7 @@ describe('checkConfig', () => {
     placement: { region: PLACEMENT_REGION },
     hyperdrive: [{ binding: 'HYPERDRIVE', id: 'b'.repeat(32) }],
     vars: { ENVIRONMENT: 'staging', DO_LOCATION_HINT: 'enam' },
+    version_metadata: { binding: 'CF_VERSION_METADATA' },
   })
 
   it('accepts a config that follows SPEC §9', () => {
@@ -63,6 +64,7 @@ describe('checkConfig', () => {
     ['a local connection string', (c) => { c.hyperdrive[0].localConnectionString = 'postgres://x' }, /localConnectionString/],
     ['the wrong ENVIRONMENT', (c) => { c.vars.ENVIRONMENT = 'production' }, /ENVIRONMENT/],
     ['another location hint', (c) => { c.vars.DO_LOCATION_HINT = 'afr' }, /DO_LOCATION_HINT/],
+    ['no version metadata binding', (c) => { delete c.version_metadata }, /version_metadata/],
   ])('refuses %s', (_, mutate, message) => {
     const config = good()
     mutate(config)

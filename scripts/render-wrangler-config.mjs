@@ -98,6 +98,9 @@ export function checkConfig (config, environment) {
   if (hyperdrive.some((h) => typeof h.localConnectionString === 'string')) {
     issues.push('a deployed config must not carry a localConnectionString')
   }
+  if (config.version_metadata?.binding !== 'CF_VERSION_METADATA') {
+    issues.push('a "CF_VERSION_METADATA" version_metadata binding is required (the deploy smoke test reads the version from /health)')
+  }
   if (config.vars?.ENVIRONMENT !== environment) issues.push(`vars.ENVIRONMENT must be "${environment}"`)
   if (config.vars?.DO_LOCATION_HINT !== 'enam') issues.push('vars.DO_LOCATION_HINT must be "enam" (beside us-east-1, SPEC §9)')
   return issues

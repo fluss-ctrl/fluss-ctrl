@@ -36,8 +36,11 @@ run on a laptop is only for the one-time resource creation in "First-time setup"
    Same steps, but the new version first gets 10% and is smoke-tested by version id (header
    `Cloudflare-Workers-Version-Overrides`), then 100% and smoke again. Any failed smoke puts the
    previous version back at 100% and fails the job.
+   A smoke counts only when `/health` answers `ok` **and** its `version` is the new version id, so
+   an answer from the old version (a location the change has not reached) never passes it. Each
+   attempt times out after 10 s; after 18 attempts (about 2.5 minutes) the smoke has failed.
 4. Check: the run summary shows "serves 100%", and `curl -s https://api.flussctrl.com/health`
-   answers `{"status":"ok"}`.
+   answers `{"status":"ok","version":"<the new version id>"}`.
 
 ## A rollout failed
 
@@ -46,16 +49,26 @@ run on a laptop is only for the one-time resource creation in "First-time setup"
    release; do not re-run the failed tag unchanged.
 3. If it says "No previous version to roll back to", this was the first deploy of the Worker.
    Nothing older exists; fix forward.
-4. If the rollback step itself failed, start **Deploy API** by hand (Run workflow, "Use workflow
-   from" = the last good `api-v*` tag). Its staging job redeploys that tag there; its production job
-   stops at "not one version at 100%" if a split is left. In that case, in the Cloudflare dashboard
-   (Workers & Pages → fluss-ctrl-api → Deployments) deploy the last good version at 100%, then
-   record what you did in the incident.
+4. If the rollback step itself failed, a traffic split may be left. Restore the last good version
+   (below), then record what you did in the incident.
+
+## Restore a version (failed rollback or a stuck split)
+
+Production changes only through the workflow and its approval, including in recovery.
+
+1. Find the version id to restore: the failed run's log names the version it rolled back to or
+   from ("Serving now: …"), or read-only, the Cloudflare dashboard (Workers & Pages → the Worker →
+   Deployments) lists the versions and their traffic.
+2. Run **Deploy API** by hand: "Use workflow from" = any `api-v*` tag (the Environments allow only
+   those), **restore_version** = that id, **restore_environment** = production or staging.
+3. Approve the `production` Environment when asked. The job deploys that version at 100% and
+   smoke-tests that `/health` answers from it. It skips the release deploy entirely.
+4. If its smoke fails, declare an incident (SPEC §21.6).
 
 ## "The current deployment is not one version at 100%"
 
-An earlier run stopped part-way through a rollout. Decide which version should serve, set it to
-100% in the dashboard (Deployments → Deploy version), and re-run the failed job.
+An earlier run stopped part-way through a rollout. Decide which version should serve, restore it
+(above), then re-run the failed release.
 
 ## A release adds a Durable Object migration
 

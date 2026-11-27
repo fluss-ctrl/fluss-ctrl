@@ -14,6 +14,8 @@ export interface Platform {
   readonly coordinator: Coordinator
   readonly cache: Cache
   rateLimiter(policy: TokenBucketPolicy): RateLimiter
+  /** The Worker version serving this request, or null where there is none (local dev, tests). */
+  readonly workerVersion: string | null
 }
 
 /** Builds the platform from the Worker's env. Throws ConfigError if a binding is missing. */
@@ -23,5 +25,6 @@ export function createPlatform (rawEnv: unknown): Platform {
     coordinator: durableCoordinator(b.DEVICE_COORDINATOR, b.DO_LOCATION_HINT),
     cache: kvCache(b.CACHE),
     rateLimiter: (policy) => durableRateLimiter(b.RATE_LIMITER, policy, b.DO_LOCATION_HINT),
+    workerVersion: b.CF_VERSION_METADATA?.id ?? null,
   }
 }

@@ -50,6 +50,8 @@ jobs:
       TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
     defaults:
       run:
+        # Explicit bash runs with pipefail, so a failed `terraform plan | tee` fails the step.
+        shell: bash
         working-directory: infra/terraform
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -99,6 +101,8 @@ jobs:
       TF_VAR_cloudflare_zone_id: ${{ vars.CLOUDFLARE_ZONE_ID }}
     defaults:
       run:
+        # Explicit bash runs with pipefail, so a failed `terraform plan | tee` fails the step.
+        shell: bash
         working-directory: infra/terraform
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

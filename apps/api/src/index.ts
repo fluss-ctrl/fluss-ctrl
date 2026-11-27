@@ -36,8 +36,12 @@ export function createApp (): Hono<AppEnv> {
     await next()
   })
 
-  // Shallow liveness check, no auth (SPEC §4 Meta).
-  app.get('/health', (c) => c.json({ status: 'ok' }))
+  // Shallow liveness check, no auth (SPEC §4 Meta). `version` names the Worker version that
+  // answered, so the deploy smoke test can tell a new version from the old one (docs/runbooks/deploy.md).
+  app.get('/health', (c) => {
+    const version = c.get('platform').workerVersion
+    return c.json(version === null ? { status: 'ok' } : { status: 'ok', version })
+  })
 
   app.notFound((c) => problem(c, 'not_found'))
 

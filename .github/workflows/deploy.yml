@@ -19,6 +19,15 @@ on:
         description: Use `wrangler deploy` (100%, no canary) to apply a Durable Object migration. See docs/runbooks/deploy.md.
         type: boolean
         default: false
+      restore_version:
+        description: Recovery only. An existing Worker version id to put back at 100% (skips the release deploy). See docs/runbooks/deploy.md.
+        type: string
+        default: ''
+      restore_environment:
+        description: Recovery only. Where to restore that version.
+        type: choice
+        options: [production, staging]
+        default: production
 
 permissions:
   contents: read
@@ -53,6 +62,7 @@ jobs:
   staging:
     name: Staging
     needs: release
+    if: ${{ !inputs.restore_version }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
@@ -131,3 +141,37 @@ jobs:
         run: |
           node scripts/deploy-worker.mjs --config apps/api/wrangler.production.generated.json \
             --base-url "$API_BASE_URL" --canary 10 --message "$TAG" $FULL_DEPLOY
+
+  # Recovery from a failed rollback or a stuck traffic split, through the same Environment gate as a
+  # deploy (production waits for the reviewer): one existing version at 100%, then smoke.
+  restore:
+    name: Restore a version (${{ inputs.restore_environment }})
+    needs: release
+    if: ${{ inputs.restore_version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: ${{ inputs.restore_environment }}
+      url: ${{ vars.API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Render the Wrangler config
+        env:
+          KV_CACHE_ID: ${{ vars.KV_CACHE_ID }}
+          HYPERDRIVE_ID: ${{ vars.HYPERDRIVE_ID }}
+          TARGET: ${{ inputs.restore_environment }}
+        run: node scripts/render-wrangler-config.mjs "$TARGET"
+      - name: Restore and smoke
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          TARGET: ${{ inputs.restore_environment }}
+          VERSION: ${{ inputs.restore_version }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          node scripts/deploy-worker.mjs --config "apps/api/wrangler.$TARGET.generated.json" \
+            --base-url "$API_BASE_URL" --restore "$VERSION" --message "$TAG"
