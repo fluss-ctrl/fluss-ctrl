@@ -167,10 +167,12 @@ Rule: a provider is built only from a written mapping. Fluss+ (SPEC §12) and th
 
 ## 7. Phases and timeline
 
-Re-baselined 4 Nov 2026 (nothing started before this date). Target: beta through
-February, launch 31 March 2027 (Q1 holds). The three-week slip plus the December break is
-absorbed by moving the MCP server, directory submission and Comb to April; everything
-else keeps its scope. SA partners and the Fluss backend team are largely unavailable
+Re-baselined 4 Nov 2026 (nothing started before this date), then slid on 22 Nov 2026
+(#14): Phase 0 had not landed by its original 17 Nov end, so every phase moves about three
+weeks instead of cutting scope. Target: beta 22 Feb – 19 Mar, launch phase 22 Mar – 23 Apr
+2027, so launch leaves Q1. The earlier three-week slip plus the December break was absorbed
+by moving the MCP server, directory submission and Comb after launch; everything else keeps
+its scope. SA partners and the Fluss backend team are largely unavailable
 19 Dec – 4 Jan, so partner-facing work sits in February and the backend ask is placed now.
 
 v0.11 (10 Nov) takes three more things off the critical path so that Phase 2 fits one
@@ -180,15 +182,15 @@ with the break-glass container (post-launch).
 
 | Phase | Dates | Weeks |
 |-------|-------|------:|
-| 0 Foundations | 4 – 17 Nov 2026 | 2 |
-| 1 Core API + sandbox + docs | 18 Nov – 18 Dec 2026 | 4.5 |
+| 0 Foundations | 4 Nov – 8 Dec 2026 | 5 |
+| 1 Core API + sandbox + docs | 9 – 18 Dec 2026, then 5 – 22 Jan 2027 | 4.5 |
 | Break (no dependencies scheduled; optional solo items listed below) | 19 Dec – 4 Jan | 2.5 |
-| 2 Real devices + console | 5 – 30 Jan 2027 | 4 |
-| 3 Beta | 2 – 27 Feb 2027 | 4 |
-| 4 Launch | 2 – 31 Mar 2027 | 4.5 |
-| Post-launch | April 2027 onward | |
+| 2 Real devices + console | 25 Jan – 19 Feb 2027 | 4 |
+| 3 Beta | 22 Feb – 19 Mar 2027 | 4 |
+| 4 Launch | 22 Mar – 23 Apr 2027 | 5 |
+| Post-launch | May 2027 onward | |
 
-### Phase 0 — Foundations (4 – 17 Nov 2026)
+### Phase 0 — Foundations (4 Nov – 8 Dec 2026)
 - Name, domain, GitHub org under Fluss Inc; accounts: Cloudflare, Neon, Sentry, PostHog, OpenStatus.
 - GitHub Issues and a GitHub Project set up: issue templates (task with Given/When/Then and the definition-of-done checklist; release; postmortem action), milestones for the phases, labels for risk and tech debt; branch, commit and PR naming carry the issue number. GitHub Environments for staging and production, with production requiring a reviewer approval.
 - Monorepo from the Fluss project template: README, CONTRIBUTING, TESTING.md, `docs/adr` (MADR), `docs/runbooks`, postmortem template, PR template, CODEOWNERS, Dev Container, Lefthook, commitlint, Renovate, release-please, `.git-blame-ignore-revs`; CI (lint, typecheck, unit, integration via Testcontainers, contract), Semgrep CE + gitleaks, dependency review, Claude Code review action with a spend limit; preview deploys per PR with a Neon branch; Terraform for Cloudflare DNS/zones and the Route 53 secondary zone, applied only from CI.
@@ -200,19 +202,19 @@ with the break-glass container (post-launch).
 - Counsel briefed on the unofficial providers, and the backend ask for SPEC §12.3 placed (open decisions, §3).
 - Done when: `pnpm test` is green in CI and a PR gets a preview URL with its own DB branch.
 
-### Phase 1 — Core API + sandbox + docs (18 Nov – 18 Dec 2026)
+### Phase 1 — Core API + sandbox + docs (9 – 18 Dec 2026, then 5 – 22 Jan 2027)
 - OAuth2 token endpoint, JWKS, scopes, sandbox vs live clients.
 - Orgs, sites, devices, device groups, subjects, grants (all v1 access types), commands with verification, events, webhooks (Standard Webhooks, Queues, retries, DLQ).
 - Rate limits, idempotency keys, pagination, error format.
 - Docs site live with three quickstarts (open a gate, share access, read logs); `llms.txt` and Markdown docs for agents.
 - CLI (`fctl`) basics: login, list devices, trigger, tail events (thin wrappers over the API).
-- Pen test booked now for a window in the second half of February, with a re-test slot in late March for emergency modes (firms need the lead time).
+- Pen test booked now for a window in late February to mid-March (Phase 3), with a re-test slot in April (Phase 4) for emergency modes (firms need the lead time).
 - Done when: a new developer opens a sandbox gate in under an hour using only the docs.
 
 ### Break (19 Dec – 4 Jan) — optional, no dependencies
 - Hardware canary bench built and wired; `fctl listen` relay; docs polish; Wiegand bridge firmware track continues if the hardware team is working.
 
-### Phase 2 — Real devices + console (5 – 30 Jan 2027)
+### Phase 2 — Real devices + console (25 Jan – 19 Feb 2027)
 - Fluss+ provider against the existing backend (SPEC §12) with `claim_code` onboarding. Depends on §12.3 items 1–3 landing by 12 January; otherwise the beta fallback (owner account per org, log polling) is used and the debt is tracked as an issue. Item 1b (migrate by existing key) is needed by 30 January for the Phase 3 migrations.
 - Gemini and Nice providers with `account_link`, once their mappings exist (SPEC §23).
 - Accentronix and Centurion (MyCentsys Remote) providers (SPEC §22) behind a per-org flag, **only once counsel has reviewed** (SPEC §22.3; nothing runs against a vendor cloud before that, the bench included); Fluss Ctrl OTP via Twilio for proof of control; conformance runs against the hardware canary bench (one cellswitch, one G-Ultra, one Fluss+).
@@ -223,18 +225,18 @@ with the break-glass container (post-launch).
 - Internal beta with one small partner on real devices.
 - Done when: a real Fluss+ gate opens via v1 with `verification: confirmed` and the partner has no manual steps.
 
-### Phase 3 — Beta (2 – 27 Feb 2027)
+### Phase 3 — Beta (22 Feb – 19 Mar 2027)
 - Migrate MEL and WeconnectU (migration guide + side-by-side period), using migrate-by-existing-key (SPEC §12.3 item 1b) so nobody collects a claim code per gate.
 - Billing: metering and a monthly usage statement per org; the first partners are invoiced by hand from it. Merchant of record decided before this phase starts (§3).
 - Wiegand bridge provider (firmware track started in Phase 1).
-- Pen test run in the second half of the month (booked in Phase 1): auth, tenancy isolation, the command path, webhooks, console and admin endpoints. POPIA/data-retention legal review; DPA template; inter-company data agreement for Fluss+ user data (SPEC §14).
+- Pen test run within the phase (booked in Phase 1): auth, tenancy isolation, the command path, webhooks, console and admin endpoints. POPIA/data-retention legal review; DPA template; inter-company data agreement for Fluss+ user data (SPEC §14).
 - Vendor notices: the written go-live notice to Accentronix and Centurion in the first week of February, so an objection only parks the provider rather than the launch. It follows counsel's review (November) and the responsible disclosure sent in December, whose 90-day fix window closes before launch (SPEC §22.3).
 - Warm standby database in another provider and region, replication-lag alerting, failover/failback runbook, first failover drill in staging (SPEC §21 Tier 1).
 - Per-provider circuit breakers; providers as components on the status page; partner-facing "Reliability" docs page.
 - Load test to 10× expected launch traffic; game day (provider outage, DB failover, DLQ drain, key rotation).
 - Done when: two large partners are fully on v1, a month of metering matches a hand count, pen-test critical and high findings closed (the rest tracked with dates).
 
-### Phase 4 — Launch (2 – 31 Mar 2027)
+### Phase 4 — Launch (22 Mar – 23 Apr 2027)
 - Emergency modes per site, evacuate and lockdown (SPEC §4): the control-room feature. Lockdown ships with the egress review gate and the honest per-device outcome (`unsupported`, `not_controlled`). Both modes act on each motor's recorded pulse mode: a gate that a pulse cannot close is never pulsed in a lockdown (`relies_on_autoclose`).
 - Accentronix and Centurion providers promoted from flag to "beta / unofficial" with written disclosure to each platform.
 - Admin web UI (overview, customers, operations, support) and the `GET /v1/admin/metrics` feed for the KPI Machine / Business Brain. Reporting pages follow launch.
@@ -245,8 +247,8 @@ with the break-glass container (post-launch).
 - Pen re-test covering emergency modes; lockdown is not enabled for any customer before it and the fire-code review (§11) are done.
 - Done when: self-serve signups are producing paying device-months without founder involvement.
 
-### Post-launch — April 2027 onward
-- April: MCP server (`mcp.flussctrl.com`) with OAuth 2.1 (SPEC §19) and the Claude connector directory submission with a plugin bundle and skill; Comb (partner API, or reverse-engineered the same way if the vendor is slow).
+### Post-launch — May 2027 onward
+- First after launch: MCP server (`mcp.flussctrl.com`) with OAuth 2.1 (SPEC §19) and the Claude connector directory submission with a plugin bundle and skill; Comb (partner API, or reverse-engineered the same way if the vendor is slow).
 - Connector architecture spec, then Gallagher → Impro → Paxton.
 - Official API or partnership conversations with Accentronix and Centurion, armed with adoption numbers.
 - Device sharing between orgs, pass links, tamper-evident log, tenant access (SPEC §20), in whatever order customers pull them.
