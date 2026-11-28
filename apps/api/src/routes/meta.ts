@@ -24,5 +24,10 @@ export const healthRoute = createRoute({
 })
 
 export function registerMetaRoutes (app: OpenAPIHono<AppEnv>): void {
-  app.openapi(healthRoute, (c) => c.json({ status: 'ok' as const }, 200))
+  // `version` names the Worker version that answered, so the deploy smoke test can tell a new
+  // version from the old one (docs/runbooks/deploy.md).
+  app.openapi(healthRoute, (c) => {
+    const version = c.get('platform').workerVersion
+    return c.json(version === null ? { status: 'ok' as const } : { status: 'ok' as const, version }, 200)
+  })
 }

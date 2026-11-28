@@ -90,8 +90,10 @@ describe('pagination', () => {
 })
 
 describe('HealthSchema', () => {
-  it('accepts only { status: "ok" }', () => {
+  it('accepts only { status: "ok" }, with an optional version', () => {
     expect(HealthSchema.parse({ status: 'ok' })).toEqual({ status: 'ok' })
+    expect(HealthSchema.parse({ status: 'ok', version: 'v1' })).toEqual({ status: 'ok', version: 'v1' })
     expect(HealthSchema.safeParse({ status: 'degraded' }).success).toBe(false)
+    expect(HealthSchema.safeParse({ status: 'ok', version: '' }).success).toBe(false)
   })
 })

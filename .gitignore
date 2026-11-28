@@ -10,4 +10,6 @@ coverage/
 !.dev.vars.example
 *.log
 .DS_Store
+# Rendered per-environment Wrangler configs (scripts/render-wrangler-config.mjs, #10).
+apps/api/wrangler.*.generated.json
 apps/api/wrangler.preview.json

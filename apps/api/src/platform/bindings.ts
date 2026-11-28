@@ -19,6 +19,9 @@ const bindingsSchema = z.object({
   // Where new Durable Objects are created. Configuration, never code (SPEC §9): the hint is honoured
   // only on an object's first get(), so it must be right before the first command reaches a device.
   DO_LOCATION_HINT: z.enum(LOCATION_HINTS),
+  // The deployed Worker version (wrangler `version_metadata`). Optional: absent in local dev and
+  // tests. Deployed configs require it, because the deploy smoke test checks which version answered.
+  CF_VERSION_METADATA: z.custom<WorkerVersionMetadata>((v) => typeof v === 'object' && v !== null && typeof (v as { id?: unknown }).id === 'string', 'expected a version metadata binding').optional(),
 })
 
 export type Bindings = z.infer<typeof bindingsSchema>

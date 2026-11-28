@@ -231,7 +231,7 @@ Two modes, one active emergency per site at a time. Both are control-room featur
 - `GET /webhooks/{id}/deliveries?status=`, `POST /webhooks/deliveries/{id}/replay`.
 
 ### Meta
-- `GET /health` (no auth; shallow), `GET /health/deep` (ops; DB + providers).
+- `GET /health` (no auth; shallow): `{ "status": "ok", "version": "<Worker version id>" }` (`version` is absent where no version exists, such as local dev; the deploy smoke test uses it to tell a new version from the old one). `GET /health/deep` (ops; DB + providers).
 - `GET /providers` → provider list with capability summaries and onboarding mode.
 - `GET /usage` → current period device-months and command counts. (Phase 3.)
 
@@ -719,7 +719,7 @@ README.md  CONTRIBUTING.md  TESTING.md  CLAUDE.md  PLAN.md  SPEC.md
 
 Tooling: TypeScript `strict`; neostandard + ESLint Stylistic (no Prettier); Lefthook runs lint, gitleaks and commitlint before commit; Conventional Commits referencing the GitHub issue (`feat(api): add grants (#123)`); release-please in manifest mode versions the apps and the published packages (`sdk-ts`, `webhooks`, `cli`) and writes the changelog; Renovate weekly. Branch names: `feat/`, `fix/`, `chore/` + issue number + slug (`feat/123-grants`); PR bodies close the issue (`Closes #123`).
 
-Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure.
+Environments: `dev` (local Miniflare + Neon branch), `preview` (per PR), `staging`, `production`. Promotion is a tagged release; Wrangler gradual rollout with automatic rollback on smoke failure. An `api-v*` release deploys to staging (non-production Cloudflare account, served on its `workers.dev` URL because that account cannot hold `flussctrl.com`), then to production after the production Environment approval: 10% canary smoke-tested by version, then 100%, rolling back to the previous version on any failed smoke. Migrations run just before each Worker upload. Hyperdrive configs are created once per environment with caching disabled; the setting lives on the config, not the binding, so every deploy checks it through the Cloudflare API and stops if caching is on (§9). Runbook: `docs/runbooks/deploy.md`.
 
 A `preview` is one Worker per PR (`fluss-ctrl-api-pr-<n>` on workers.dev, in the non-production Cloudflare account) with its own KV namespace and Neon branch (`preview/pr-<n>`, migrations applied), created by `preview.yml` on each push and deleted when the PR closes; the Neon branch also expires after 14 days. It is a separate Worker rather than a preview version because Cloudflare gives no preview URLs to Workers with Durable Objects, and it keeps each PR's Durable Object storage apart. A `GET /health` smoke runs after each deploy and its result is posted on the PR. Previews hold no customer data and are never promoted; staging and production are built from `main` and release tags.
 

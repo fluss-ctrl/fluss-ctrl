@@ -1,6 +1,6 @@
 # release-please in manifest mode (SPEC §16): on every push to main, opens or updates the release
 # PR from release-please-config.json and .release-please-manifest.json. Merging that PR tags the
-# components and creates GitHub releases. Nothing is published or deployed here yet (#10 and later).
+# components and creates GitHub releases. An `api` release starts deploy.yml at its tag (#10).
 # Uses only the automatic GITHUB_TOKEN; the repository setting "Allow GitHub Actions to create and
 # approve pull requests" must be on for it to open the PR.
 name: release-please
@@ -25,8 +25,19 @@ jobs:
       contents: write # tags and releases
       pull-requests: write # the release PR
       issues: write # release labels
+      actions: write # dispatch deploy.yml for an api release
     steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # A tag created with the automatic token does not start a tag-push workflow, but a
+      # workflow_dispatch does, so the deploy is dispatched at the new tag (docs/runbooks/deploy.md).
+      - name: Deploy the API release
+        if: steps.release.outputs['apps/api--release_created'] == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs['apps/api--tag_name'] }}
+        run: gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref "$TAG"
