@@ -124,7 +124,10 @@ improvise.
 - Regions `za` and `us` are routing labels that both map to one `us-east-1` datastore today. Never
   hard-code a region or assume a single database (SPEC §9).
 - Event lists page on `recorded_at`; `occurred_at` is device-reported data, never a cursor or a
-  partition key (SPEC §4, §5).
+  partition key (SPEC §4, §5). Lists run 5 s behind the clock (the settle window) so a cursor cannot
+  pass an event that is still committing: list events only through `listEvents` with the injected
+  clock, mint an event's id at its insert inside the transaction that writes it, and never reuse an
+  id minted earlier.
 - Grant validity has one implementation: `isGrantValidAt` in `packages/core`. `count_limited` uses
   are reserved at accept and committed or released at the terminal state; never check, then
   decrement later (SPEC §6).

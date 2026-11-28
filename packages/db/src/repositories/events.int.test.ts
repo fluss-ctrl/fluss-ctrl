@@ -1,13 +1,16 @@
-// Event paging (SPEC §4, §5; issue #5): lists follow recorded_at, never occurred_at, the cursor
-// walks every event exactly once, and paging never crosses organisations.
+// Event paging (SPEC §4, §5; issues #5 and #30): lists follow recorded_at, never occurred_at, the
+// cursor walks every event exactly once, paging never crosses organisations, and a page never holds
+// an event recorded inside the settle window, so a cursor cannot pass one that is still committing.
 import { sql } from 'drizzle-orm'
+import fc from 'fast-check'
 import postgres from 'postgres'
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest'
 import { createDb, type Db } from '../client.ts'
+import { organisations } from '../schema/index.ts'
 import { withOrg } from '../scope.ts'
 import { testId } from '../test/ids.ts'
 import { seedOrg, type SeededOrg } from '../test/seed.ts'
-import { DEFAULT_LIMIT, insertEvent, listEvents, type EventRow } from './events.ts'
+import { DEFAULT_LIMIT, EVENT_SETTLE_MS, insertEvent, listEvents, recordedAtFromId, type EventRow } from './events.ts'
 
 let client: postgres.Sql
 let db: Db
@@ -15,6 +18,9 @@ let a: SeededOrg
 let b: SeededOrg
 const DAY = 86_400_000
 const base = Date.UTC(2026, 10, 25) // 25 Nov 2026
+// A clock reading by which every fixture below has settled, including the rows seedOrg() records
+// at the wall clock.
+const FAR = new Date(Date.UTC(2100, 0, 1))
 
 beforeAll(async () => {
   client = postgres(inject('appUrl'), { max: 2, onnotice: () => {} })
@@ -45,7 +51,7 @@ async function walk (orgId: string, limit: number, extra: Parameters<typeof list
   const out: EventRow[] = []
   let cursor: string | null = null
   do {
-    const page = await withOrg(db, orgId, (scope) => listEvents(scope, { ...extra, limit, cursor }))
+    const page = await withOrg(db, orgId, (scope) => listEvents(scope, { ...extra, limit, cursor }, FAR))
     expect(page.data.length).toBeLessThanOrEqual(limit)
     out.push(...page.data)
     cursor = page.nextCursor
@@ -101,7 +107,7 @@ describe('listEvents', () => {
       const tracedDb = createDb(traced)
       for (const limit of [Number.NaN, Number.POSITIVE_INFINITY]) {
         sent.length = 0
-        const page = await withOrg(tracedDb, c.orgId, (scope) => listEvents(scope, { limit }))
+        const page = await withOrg(tracedDb, c.orgId, (scope) => listEvents(scope, { limit }, FAR))
         expect(page.data).toHaveLength(DEFAULT_LIMIT)
         expect(page.nextCursor).not.toBeNull()
         const select = sent.find((q) => q.query.includes('from "events"'))
@@ -114,18 +120,176 @@ describe('listEvents', () => {
   })
 
   it('returns a null cursor on the last page and rejects a forged one', async () => {
-    const page = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: 200 }))
+    const page = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: 200 }, FAR))
     expect(page.nextCursor).toBeNull()
-    await expect(withOrg(db, a.orgId, (scope) => listEvents(scope, { cursor: 'not-a-cursor' }))).rejects.toThrow('Invalid cursor')
+    await expect(withOrg(db, a.orgId, (scope) => listEvents(scope, { cursor: 'not-a-cursor' }, FAR))).rejects.toThrow('Invalid cursor')
   })
 
   it('never shows another organisation, even with its cursor', async () => {
-    const aPage = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: 1 }))
+    const aPage = await withOrg(db, a.orgId, (scope) => listEvents(scope, { limit: 1 }, FAR))
     expect(aPage.nextCursor).not.toBeNull()
-    const bPage = await withOrg(db, b.orgId, (scope) => listEvents(scope, { limit: 200, cursor: aPage.nextCursor }))
+    const bPage = await withOrg(db, b.orgId, (scope) => listEvents(scope, { limit: 200, cursor: aPage.nextCursor }, FAR))
     expect(bPage.data.length).toBeGreaterThan(0)
     expect(bPage.data.every((r) => r.orgId === b.orgId)).toBe(true)
     const rows = await walk(b.orgId, 1)
     expect(rows.map((r) => r.type).sort()).toEqual(['access.denied', 'command.requested'])
+  })
+})
+
+describe('the settle window', () => {
+  const t0 = Date.UTC(2026, 11, 1, 8) // 1 Dec 2026 08:00:00.000Z
+
+  /** An organisation with no events, so every row a test reads is one it wrote. */
+  async function emptyOrg (): Promise<string> {
+    const orgId = testId('org')
+    await withOrg(db, orgId, ({ tx }) => tx.insert(organisations).values({ id: orgId, name: 'Settle window', region: 'za' }))
+    return orgId
+  }
+
+  function record (orgId: string, ms: number): Promise<EventRow> {
+    return withOrg(db, orgId, (scope) => insertEvent(scope, { id: testId('evt', ms), type: 'access.granted', occurredAt: new Date(ms) }))
+  }
+
+  /** Inserts an event in a transaction of its own and leaves it open until the returned function is called. */
+  async function hold (on: Db, orgId: string, id: string): Promise<() => Promise<void>> {
+    let inserted!: () => void
+    let release!: () => void
+    const isInserted = new Promise<void>((resolve) => { inserted = resolve })
+    const mayCommit = new Promise<void>((resolve) => { release = resolve })
+    const tx = withOrg(on, orgId, async (scope) => {
+      await insertEvent(scope, { id, type: 'access.granted', occurredAt: recordedAtFromId(id) })
+      inserted()
+      await mayCommit
+    })
+    await Promise.race([isInserted, tx])
+    return async () => {
+      release()
+      await tx
+    }
+  }
+
+  /**
+   * A consumer tailing the log: it follows `next_cursor` while it is given one and, at the end of
+   * the list, reads again from the last cursor it holds. `read` resolves to whether a cursor came back.
+   */
+  function tail (on: Db, orgId: string, limit: number): { seen: EventRow[], read: (nowMs: number) => Promise<boolean> } {
+    const seen: EventRow[] = []
+    let cursor: string | null = null
+    return {
+      seen,
+      read: async (nowMs) => {
+        const page = await withOrg(on, orgId, (scope) => listEvents(scope, { limit, cursor }, new Date(nowMs)))
+        for (const e of page.data) if (!seen.some((s) => s.id === e.id)) seen.push(e)
+        cursor = page.nextCursor ?? cursor
+        return page.nextCursor !== null
+      },
+    }
+  }
+
+  it('gives a consumer paging by cursor both events when two transactions commit out of order', async () => {
+    const orgId = await emptyOrg()
+    const old = await record(orgId, t0 - 60_000)
+    // `slow` takes the earlier id, then stays open while `fast` and `next` commit behind it.
+    const slowId = testId('evt', t0)
+    const commitSlow = await hold(db, orgId, slowId)
+    const consumer = tail(db, orgId, 1)
+    let fast: EventRow
+    let next: EventRow
+    try {
+      fast = await record(orgId, t0 + 20)
+      next = await record(orgId, t0 + 40)
+      // 100 ms on, `fast` is committed and `slow` is not. A page that returned `fast` would hand
+      // out a cursor that sits past `slow`.
+      await consumer.read(t0 + 100)
+      await consumer.read(t0 + 100)
+      expect(consumer.seen).toEqual([old])
+    } finally {
+      await commitSlow()
+    }
+
+    const settled = t0 + 40 + EVENT_SETTLE_MS + 1
+    while (await consumer.read(settled));
+    expect(consumer.seen.map((e) => e.id)).toEqual([old.id, slowId, fast.id, next.id])
+  })
+
+  it('holds an event back until it was recorded more than 5 s ago', async () => {
+    expect(EVENT_SETTLE_MS).toBe(5000)
+    const orgId = await emptyOrg()
+    const first = await record(orgId, t0)
+    const second = await record(orgId, t0 + 1)
+    const at = (nowMs: number) => withOrg(db, orgId, (scope) => listEvents(scope, { limit: 1 }, new Date(nowMs)))
+
+    expect(await at(t0 + 5000)).toEqual({ data: [], nextCursor: null })
+    // `second` is committed but not settled: the list ends at `first`, with no cursor past it.
+    expect(await at(t0 + 5001)).toEqual({ data: [first], nextCursor: null })
+    const page = await at(t0 + 5002)
+    expect(page.data).toEqual([first])
+    const rest = await withOrg(db, orgId, (scope) => listEvents(scope, { cursor: page.nextCursor }, new Date(t0 + 5002)))
+    expect(rest).toEqual({ data: [second], nextCursor: null })
+  })
+
+  it('applies with a cursor, and whatever since and until ask for', async () => {
+    const orgId = await emptyOrg()
+    const first = await record(orgId, t0)
+    await record(orgId, t0 + 1000)
+    await record(orgId, t0 + 2000)
+    const now = new Date(t0 + 1000 + EVENT_SETTLE_MS) // only `first` has settled
+
+    const page = await withOrg(db, orgId, (scope) => listEvents(scope, { since: new Date(t0), until: new Date(t0 + DAY) }, now))
+    expect(page).toEqual({ data: [first], nextCursor: null })
+    const cursor = await withOrg(db, orgId, (scope) => listEvents(scope, { limit: 1 }, FAR)).then((p) => p.nextCursor)
+    expect(cursor).not.toBeNull()
+    expect(await withOrg(db, orgId, (scope) => listEvents(scope, { cursor }, now))).toEqual({ data: [], nextCursor: null })
+  })
+
+  it('shows a tailing consumer every event, in order, whatever order the writers commit in', async () => {
+    // Writers keep their side (SPEC §5): each event commits within the window of its recorded_at.
+    // Reads land anywhere in between; the last ones come after everything has settled.
+    const lastWrite = 2000
+    const write = fc.record({ at: fc.integer({ min: 0, max: lastWrite }), commitAfter: fc.integer({ min: 0, max: EVENT_SETTLE_MS }) })
+    const writes = fc.array(write, { minLength: 2, maxLength: 6 })
+    const reads = fc.array(fc.integer({ min: 0, max: lastWrite + EVENT_SETTLE_MS + 1000 }), { maxLength: 10 })
+    // One connection for each transaction a run can hold open, and one for the reader.
+    const pool = postgres(inject('appUrl'), { max: 7, onnotice: () => {} })
+    const poolDb = createDb(pool)
+    try {
+      await fc.assert(fc.asyncProperty(writes, reads, fc.integer({ min: 1, max: 3 }), async (ws, rs, limit) => {
+        const orgId = await emptyOrg()
+        const ids = ws.map((w) => testId('evt', t0 + w.at))
+        const steps = [
+          ...ws.map((w, i) => ({ t: w.at, order: 0, kind: 'insert' as const, i })),
+          ...ws.map((w, i) => ({ t: w.at + w.commitAfter, order: 1, kind: 'commit' as const, i })),
+          ...rs.map((t) => ({ t, order: 2, kind: 'read' as const, i: -1 })),
+        ].sort((x, y) => x.t - y.t || x.order - y.order)
+        const consumer = tail(poolDb, orgId, limit)
+        const commits = new Map<number, () => Promise<void>>()
+        try {
+          for (const step of steps) {
+            if (step.kind === 'insert') commits.set(step.i, await hold(poolDb, orgId, ids[step.i]!))
+            else if (step.kind === 'commit') await commits.get(step.i)!()
+            else await consumer.read(t0 + step.t)
+          }
+        } finally {
+          // A no-op for a transaction that has already committed.
+          await Promise.all([...commits.values()].map((commit) => commit()))
+        }
+        const settled = t0 + lastWrite + EVENT_SETTLE_MS + 1
+        while (await consumer.read(settled));
+
+        const inOrder = [...consumer.seen].sort((x, y) => x.recordedAt.getTime() - y.recordedAt.getTime())
+        expect(consumer.seen.map((e) => e.recordedAt.getTime())).toEqual(inOrder.map((e) => e.recordedAt.getTime()))
+        expect(consumer.seen.map((e) => e.id).sort()).toEqual([...ids].sort())
+      }), {
+        numRuns: 40,
+        examples: [
+          // A read between two commits that land out of order.
+          [[{ at: 0, commitAfter: 3 }, { at: 1, commitAfter: 0 }], [2], 1],
+          // Two events commit behind an open one: without the window the cursor moves past it.
+          [[{ at: 0, commitAfter: 3000 }, { at: 10, commitAfter: 0 }, { at: 20, commitAfter: 0 }], [100, 100, 4000], 1],
+        ],
+      })
+    } finally {
+      await pool.end()
+    }
   })
 })

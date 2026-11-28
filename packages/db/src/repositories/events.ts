@@ -2,6 +2,11 @@
 // what the cursor follows, so a consumer tailing the log does not skip an event whose device time
 // is late (SPEC §4). `occurred_at` is a filter only. Request rules (`since` required without
 // another filter, the 31-day window) belong to the API layer, not here.
+//
+// `recorded_at` is taken before the insert commits, so two transactions can commit out of
+// `recorded_at` order. A list therefore runs EVENT_SETTLE_MS behind the clock: no page holds an
+// event recorded more recently than that, and so no cursor can sit past an event that is still
+// committing (SPEC §4, issue #30). Reading one event by id is not a list and does not wait.
 import { and, asc, eq, gte, lt, sql, type SQL } from 'drizzle-orm'
 import { decodeEventCursor, encodeEventCursor } from '../cursor.ts'
 import { events } from '../schema/index.ts'
@@ -48,6 +53,8 @@ export interface Page<T> {
 
 export const DEFAULT_LIMIT = 50
 export const MAX_LIMIT = 200
+/** The settle window (SPEC §4): a list holds only events recorded more than this long ago. */
+export const EVENT_SETTLE_MS = 5000
 
 /** Milliseconds encoded in a UUIDv7 under a prefix (mirrors idTimestamp in packages/core). */
 export function recordedAtFromId (id: string): Date {
@@ -74,9 +81,16 @@ export async function insertEvent (scope: OrgScope, event: NewEvent): Promise<Ev
   return row!
 }
 
-export async function listEvents (scope: OrgScope, query: ListEventsQuery = {}): Promise<Page<EventRow>> {
+/**
+ * One page of the log in `recorded_at` order. `now` is the injected clock's reading, never a value
+ * from the request: the page stops at the settle window behind it, whatever the filters ask for.
+ */
+export async function listEvents (scope: OrgScope, query: ListEventsQuery, now: Date): Promise<Page<EventRow>> {
   const limit = clampLimit(query.limit)
-  const where: (SQL | undefined)[] = [eq(events.orgId, scope.orgId)]
+  const where: (SQL | undefined)[] = [
+    eq(events.orgId, scope.orgId),
+    lt(events.recordedAt, new Date(now.getTime() - EVENT_SETTLE_MS)),
+  ]
   if (query.cursor) {
     const c = decodeEventCursor(query.cursor)
     where.push(sql`(${events.recordedAt}, ${events.id}) > (${c.recordedAt.toISOString()}::timestamptz, ${c.id})`)
