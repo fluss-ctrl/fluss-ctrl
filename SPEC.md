@@ -222,6 +222,7 @@ Two modes, one active emergency per site at a time. Both are control-room featur
 
 ### Events
 - `GET /events?site_id=&device_id=&subject_id=&type=&since=&until=&occurred_since=&occurred_until=` (cursor pagination). Ordered by `recorded_at` (ingest order), which is also what the cursor follows, so a consumer tailing the log never misses an event that arrives late. `since`/`until` filter on `recorded_at`; `occurred_since`/`occurred_until` filter on device time. `since` is required if no other filter is given; max window 31 days per page request.
+- The list runs 5 s behind the clock (the settle window): a page holds only events whose `recorded_at` is more than 5 s before the request, whatever `until` asks for, and `next_cursor` is `null` once those have been read. `recorded_at` is fixed before the event's transaction commits, so two events can commit out of `recorded_at` order; without the window a page could return the later one and hand out a cursor that sits past the earlier one, and no later page would return it. Every event is committed within 5 s of its `recorded_at` (the writer's rule, §5), so nothing can appear behind a page that has already been served, and neither a cursor nor a `since` taken from a page can pass an event. `GET /events/{id}` and webhooks (§8.2) do not wait: they show an event as soon as it is committed.
 - `GET /events/{id}`
 - `POST /events/export` `{ filters, format: "json|csv" }` → async job, result URL delivered by webhook `export.completed` and in the console.
 
@@ -293,6 +294,11 @@ events          id, org_id, site_id, device_id, subject_id, grant_id, command_id
                 indexes (org_id, recorded_at desc), (device_id, recorded_at desc), (subject_id, recorded_at desc),
                 (org_id, occurred_at)
                 -- `recorded_at` is the time inside the UUIDv7 id, so a lookup by id prunes to one partition.
+                -- It is fixed before the insert commits, so event lists run 5 s behind it (the settle window, §4).
+                -- The writer's rule that makes 5 s enough: mint the id at the insert, inside the transaction
+                -- that writes the event, and commit well inside the window. The insert refuses an id minted
+                -- more than 1 s earlier (an id kept for a retry is stale: mint a new one), which leaves 4 s
+                -- for the rest of the transaction. Nothing limits how long it stays open yet (issue #47).
                 -- `occurred_at` is device-reported and can be late or wrong: data, never a partition key.
 ingested_refs   org_id, controller_id, provider_event_ref, event_id, recorded_at
                 PRIMARY KEY (org_id, controller_id, provider_event_ref)   (ingest dedup, §8.1; pruned after 90 days)
@@ -456,7 +462,7 @@ Event envelope:
   "data": { … type-specific … }, "schema_version": 1 }
 ```
 
-`occurred_at` is when it happened at the device (provider-reported where available); `recorded_at` is when Fluss Ctrl stored it. Provider-originated events (someone opened the gate from the Fluss+ app) are ingested through provider push or polling and appear with `method` set accordingly — this is what makes Fluss Ctrl the log of record, not just a log of API calls. Lists and cursors follow `recorded_at` (§4), so an event that arrives late is never skipped.
+`occurred_at` is when it happened at the device (provider-reported where available); `recorded_at` is when Fluss Ctrl stored it. Provider-originated events (someone opened the gate from the Fluss+ app) are ingested through provider push or polling and appear with `method` set accordingly — this is what makes Fluss Ctrl the log of record, not just a log of API calls. Lists and cursors follow `recorded_at` (§4), so an event that arrives late is never skipped; lists run 5 s behind it (the settle window, §4), so an event that commits late is not skipped either.
 
 Ingestion is idempotent and does not double-count. Every ingested entry is keyed by controller and vendor event reference in `ingested_refs`, so a re-poll after a failure inserts nothing. A vendor log entry that is only the echo of a Fluss Ctrl command (the Fluss+ log shows `Api Trigger` with the `flussctrl cmd_…` marker from §12.2; other providers match on `provider_ref`, or on action and time) is attached to that command as `data.provider_echo` instead of becoming a second access event.
 
