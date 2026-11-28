@@ -39,10 +39,18 @@ export function assertTokenBucketPolicy (policy: TokenBucketPolicy): void {
   if (!Number.isFinite(policy.refillPerSecond) || policy.refillPerSecond <= 0) throw new RangeError('refillPerSecond must be a positive finite number')
 }
 
+/** What a bucket that held `tokens` at `updatedAt` holds at `atMs`. A clock that went backwards refills nothing. */
+function refill (tokens: number, updatedAt: number, policy: TokenBucketPolicy, atMs: number): number {
+  const elapsedMs = Math.max(0, atMs - updatedAt)
+  return Math.min(policy.capacity, tokens + (elapsedMs / 1000) * policy.refillPerSecond)
+}
+
 /**
  * Refills the bucket for the time since `state.updatedAt`, then takes `cost` tokens if they are
  * there. A missing state is a full bucket. A clock that went backwards refills nothing (it never
  * drains the bucket either). A cost above capacity can never succeed, so it throws.
+ *
+ * When it refuses, the same call on the returned state at `nowMs + retryAfterMs` or later is allowed.
  */
 export function takeTokens (
   state: TokenBucketState | undefined,
@@ -54,10 +62,10 @@ export function takeTokens (
   if (!Number.isFinite(cost) || cost <= 0 || cost > policy.capacity) throw new RangeError('cost must be positive and at most the capacity')
   if (!Number.isFinite(nowMs)) throw new RangeError('now must be finite')
 
-  const elapsedMs = state ? Math.max(0, nowMs - state.updatedAt) : 0
   const start = state ? Math.min(policy.capacity, Math.max(0, state.tokens)) : policy.capacity
-  const tokens = Math.min(policy.capacity, start + (elapsedMs / 1000) * policy.refillPerSecond)
-  const updatedAt = state ? Math.max(nowMs, state.updatedAt) : nowMs
+  const since = state ? state.updatedAt : nowMs
+  const tokens = refill(start, since, policy, nowMs)
+  const updatedAt = Math.max(nowMs, since)
 
   if (tokens >= cost) {
     const left = tokens - cost
@@ -65,6 +73,10 @@ export function takeTokens (
   }
   // After a clock step back, nothing refills until the clock passes updatedAt again, so add that gap.
   const rollbackMs = Math.max(0, updatedAt - nowMs)
-  const retryAfterMs = rollbackMs + Math.ceil(((cost - tokens) / policy.refillPerSecond) * 1000)
+  let retryAfterMs = rollbackMs + Math.ceil(((cost - tokens) / policy.refillPerSecond) * 1000)
+  // That division is only an estimate of what refill will add: the two round differently, and the
+  // estimate can land a millisecond short (#36). So hold it to the arithmetic the retry will run.
+  // One step is enough for any real policy; doubling the step keeps the loop finite for every policy.
+  for (let stepMs = 1; refill(tokens, updatedAt, policy, nowMs + retryAfterMs) < cost; stepMs *= 2) retryAfterMs += stepMs
   return { state: { tokens, updatedAt }, decision: { allowed: false, remaining: Math.floor(tokens), retryAfterMs } }
 }
