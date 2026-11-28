@@ -6,7 +6,9 @@ export { createDb } from './client.ts'
 export type { Db, Schema } from './client.ts'
 export { decodeEventCursor, encodeEventCursor, InvalidCursorError } from './cursor.ts'
 export type { EventCursor } from './cursor.ts'
-export { DEFAULT_LIMIT, insertEvent, listEvents, MAX_LIMIT, recordedAtFromId } from './repositories/events.ts'
+export {
+  DEFAULT_LIMIT, EVENT_ID_MAX_AGE_MS, EVENT_SETTLE_MS, insertEvent, listEvents, MAX_LIMIT, recordedAtFromId, StaleEventIdError,
+} from './repositories/events.ts'
 export type { EventRow, ListEventsQuery, NewEvent, Page } from './repositories/events.ts'
 export { OrgScope, withOrg } from './scope.ts'
 export type { Tx } from './scope.ts'
