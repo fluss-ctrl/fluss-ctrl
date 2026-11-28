@@ -126,8 +126,9 @@ improvise.
 - Event lists page on `recorded_at`; `occurred_at` is device-reported data, never a cursor or a
   partition key (SPEC §4, §5). Lists run 5 s behind the clock (the settle window) so a cursor cannot
   pass an event that is still committing: list events only through `listEvents` with the injected
-  clock, mint an event's id at its insert inside the transaction that writes it, and never reuse an
-  id minted earlier.
+  clock, and mint an event's id at its insert, inside the transaction that writes it. `insertEvent`
+  refuses an id minted more than 1 s earlier, so mint a new id on a retry, and keep that transaction
+  short.
 - Grant validity has one implementation: `isGrantValidAt` in `packages/core`. `count_limited` uses
   are reserved at accept and committed or released at the terminal state; never check, then
   decrement later (SPEC §6).

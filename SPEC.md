@@ -295,8 +295,9 @@ events          id, org_id, site_id, device_id, subject_id, grant_id, command_id
                 -- `recorded_at` is the time inside the UUIDv7 id, so a lookup by id prunes to one partition.
                 -- It is fixed before the insert commits, so event lists run 5 s behind it (the settle window, §4).
                 -- The writer's rule that makes 5 s enough: mint the id at the insert, inside the transaction
-                -- that writes the event, never earlier (an id kept for a retry is stale: mint a new one), and
-                -- commit that transaction well inside the window.
+                -- that writes the event, and commit well inside the window. The insert refuses an id minted
+                -- more than 1 s earlier (an id kept for a retry is stale: mint a new one), which leaves 4 s
+                -- for the rest of the transaction. Nothing limits how long it stays open yet (issue #47).
                 -- `occurred_at` is device-reported and can be late or wrong: data, never a partition key.
 ingested_refs   org_id, controller_id, provider_event_ref, event_id, recorded_at
                 PRIMARY KEY (org_id, controller_id, provider_event_ref)   (ingest dedup, §8.1; pruned after 90 days)

@@ -10,7 +10,7 @@ import { organisations } from '../schema/index.ts'
 import { withOrg } from '../scope.ts'
 import { testId } from '../test/ids.ts'
 import { seedOrg, type SeededOrg } from '../test/seed.ts'
-import { DEFAULT_LIMIT, EVENT_SETTLE_MS, insertEvent, listEvents, recordedAtFromId, type EventRow } from './events.ts'
+import { DEFAULT_LIMIT, EVENT_ID_MAX_AGE_MS, EVENT_SETTLE_MS, insertEvent, listEvents, recordedAtFromId, StaleEventIdError, type EventRow } from './events.ts'
 
 let client: postgres.Sql
 let db: Db
@@ -39,10 +39,10 @@ beforeAll(async () => {
         deviceId: i % 2 === 0 ? a.deviceId : null,
         method: 'api',
         result: 'ok',
-      })
+      }, new Date(base + day * DAY))
     }
   })
-  await withOrg(db, b.orgId, (scope) => insertEvent(scope, { id: testId('evt', base + DAY / 2), type: 'access.denied', occurredAt: new Date(base) }))
+  await withOrg(db, b.orgId, (scope) => insertEvent(scope, { id: testId('evt', base + DAY / 2), type: 'access.denied', occurredAt: new Date(base) }, new Date(base + DAY / 2)))
 })
 
 afterAll(async () => { await client.end() })
@@ -97,7 +97,7 @@ describe('listEvents', () => {
     const c = await seedOrg(db)
     await withOrg(db, c.orgId, async (scope) => {
       for (let i = 0; i < DEFAULT_LIMIT + 10; i++) {
-        await insertEvent(scope, { id: testId('evt', base + i * 1000), type: 'access.granted', occurredAt: new Date(base) })
+        await insertEvent(scope, { id: testId('evt', base + i * 1000), type: 'access.granted', occurredAt: new Date(base) }, new Date(base + i * 1000))
       }
     })
     // Capture the SQL the driver sends, so the test sees the LIMIT itself, not just the page.
@@ -146,8 +146,9 @@ describe('the settle window', () => {
     return orgId
   }
 
+  /** Writes an event as a writer keeping SPEC §5 does: the id is minted at the insert. */
   function record (orgId: string, ms: number): Promise<EventRow> {
-    return withOrg(db, orgId, (scope) => insertEvent(scope, { id: testId('evt', ms), type: 'access.granted', occurredAt: new Date(ms) }))
+    return withOrg(db, orgId, (scope) => insertEvent(scope, { id: testId('evt', ms), type: 'access.granted', occurredAt: new Date(ms) }, new Date(ms)))
   }
 
   /** Inserts an event in a transaction of its own and leaves it open until the returned function is called. */
@@ -157,7 +158,7 @@ describe('the settle window', () => {
     const isInserted = new Promise<void>((resolve) => { inserted = resolve })
     const mayCommit = new Promise<void>((resolve) => { release = resolve })
     const tx = withOrg(on, orgId, async (scope) => {
-      await insertEvent(scope, { id, type: 'access.granted', occurredAt: recordedAtFromId(id) })
+      await insertEvent(scope, { id, type: 'access.granted', occurredAt: recordedAtFromId(id) }, recordedAtFromId(id))
       inserted()
       await mayCommit
     })
@@ -291,5 +292,33 @@ describe('the settle window', () => {
     } finally {
       await pool.end()
     }
+  })
+})
+
+describe('insertEvent and the age of the id', () => {
+  const t0 = Date.UTC(2026, 11, 2, 8) // 2 Dec 2026 08:00:00.000Z
+
+  it('stores an event whose id was minted up to 1 s before the insert', async () => {
+    expect(EVENT_ID_MAX_AGE_MS).toBe(1000)
+    const c = await seedOrg(db)
+    const rows = await withOrg(db, c.orgId, async (scope) => [
+      await insertEvent(scope, { id: testId('evt', t0), type: 'access.granted', occurredAt: new Date(t0) }, new Date(t0)),
+      await insertEvent(scope, { id: testId('evt', t0), type: 'access.granted', occurredAt: new Date(t0) }, new Date(t0 + EVENT_ID_MAX_AGE_MS)),
+    ])
+    expect(rows.map((r) => r.recordedAt.getTime())).toEqual([t0, t0])
+  })
+
+  it('refuses an id minted earlier and stores nothing from that transaction', async () => {
+    const c = await seedOrg(db)
+    const kept = testId('evt', t0)
+    const stale = testId('evt', t0)
+    // The first insert is fine; the second reuses an id minted 1.001 s before, as a retry would.
+    const work = withOrg(db, c.orgId, async (scope) => {
+      await insertEvent(scope, { id: kept, type: 'access.granted', occurredAt: new Date(t0) }, new Date(t0))
+      await insertEvent(scope, { id: stale, type: 'access.granted', occurredAt: new Date(t0) }, new Date(t0 + EVENT_ID_MAX_AGE_MS + 1))
+    })
+    await expect(work).rejects.toThrow(StaleEventIdError)
+    const page = await withOrg(db, c.orgId, (scope) => listEvents(scope, { type: 'access.granted' }, FAR))
+    expect(page.data).toEqual([])
   })
 })

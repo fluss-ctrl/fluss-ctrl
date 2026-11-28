@@ -7,6 +7,10 @@
 // `recorded_at` order. A list therefore runs EVENT_SETTLE_MS behind the clock: no page holds an
 // event recorded more recently than that, and so no cursor can sit past an event that is still
 // committing (SPEC §4, issue #30). Reading one event by id is not a list and does not wait.
+//
+// The window is only long enough if an event commits soon after the time in its id. The insert
+// keeps the first half of that: it refuses an id minted more than EVENT_ID_MAX_AGE_MS earlier
+// (SPEC §5). How long the transaction then stays open is not limited here (issue #47).
 import { and, asc, eq, gte, lt, sql, type SQL } from 'drizzle-orm'
 import { decodeEventCursor, encodeEventCursor } from '../cursor.ts'
 import { events } from '../schema/index.ts'
@@ -55,6 +59,16 @@ export const DEFAULT_LIMIT = 50
 export const MAX_LIMIT = 200
 /** The settle window (SPEC §4): a list holds only events recorded more than this long ago. */
 export const EVENT_SETTLE_MS = 5000
+/** How long before its insert an event id may have been minted (SPEC §5). */
+export const EVENT_ID_MAX_AGE_MS = 1000
+
+/** The event id was minted too long before its insert. A caller's mistake, never a request's. */
+export class StaleEventIdError extends Error {
+  constructor (ageMs: number) {
+    super(`Event id was minted ${ageMs} ms before its insert (limit ${EVENT_ID_MAX_AGE_MS} ms): mint it at the insert`)
+    this.name = 'StaleEventIdError'
+  }
+}
 
 /** Milliseconds encoded in a UUIDv7 under a prefix (mirrors idTimestamp in packages/core). */
 export function recordedAtFromId (id: string): Date {
@@ -72,11 +86,29 @@ export function clampLimit (limit: number | undefined): number {
   return Math.min(Math.max(Math.trunc(limit), 1), MAX_LIMIT)
 }
 
-export async function insertEvent (scope: OrgScope, event: NewEvent): Promise<EventRow> {
+/**
+ * The `recorded_at` for an event inserted at `now`: the time in its id, refused with
+ * StaleEventIdError when that is more than EVENT_ID_MAX_AGE_MS before `now`. An id ahead of the
+ * clock is let through: it cannot fall behind a cursor, it only shows in lists later.
+ */
+export function recordedAtForInsert (id: string, now: Date): Date {
+  const recordedAt = recordedAtFromId(id)
+  const ageMs = now.getTime() - recordedAt.getTime()
+  // Written this way round so that a clock reading that is not a time is refused too.
+  if (!(ageMs <= EVENT_ID_MAX_AGE_MS)) throw new StaleEventIdError(ageMs)
+  return recordedAt
+}
+
+/**
+ * Writes one event. `now` is the injected clock's reading at the insert, from the clock that
+ * minted the id. Mint the id here, inside the transaction, and mint a new one on a retry: an id
+ * kept from earlier would land behind cursors that have already moved on (SPEC §5).
+ */
+export async function insertEvent (scope: OrgScope, event: NewEvent, now: Date): Promise<EventRow> {
   const [row] = await scope.tx.insert(events).values({
     ...event,
     orgId: scope.orgId,
-    recordedAt: recordedAtFromId(event.id),
+    recordedAt: recordedAtForInsert(event.id, now),
   }).returning()
   return row!
 }
