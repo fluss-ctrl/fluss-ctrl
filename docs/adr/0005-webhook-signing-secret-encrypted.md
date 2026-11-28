@@ -74,10 +74,12 @@ database, and lets that key be rotated without any customer changing anything.
   customer noticing.
 * Bad: the secret is recoverable by whoever holds both the database and the region's master key.
   The master key must be escrowed (SPEC §21.4); losing it leaves every endpoint unable to sign
-  until its secret is rotated.
+  until a replacement key is installed and the endpoint's secret is rotated. One rotation is
+  enough: the unreadable secret becomes the previous one, and a previous secret that will not open
+  is left out of the signature (SPEC §8.2), so the new secret signs alone from the first delivery.
 * Bad: two dead columns stay in the table until issue #46.
-* Neutral: `secret_enc` is nullable until issue #46. An endpoint whose secret is missing or will
-  not open fails its delivery; it is never sent unsigned (SPEC §8.2).
+* Neutral: `secret_enc` is nullable until issue #46. An endpoint whose current secret is missing or
+  will not open fails its delivery; it is never sent unsigned (SPEC §8.2).
 * Neutral: an expired previous secret stays in the row, as ciphertext, until the next rotation
   overwrites it. It is never used. Clearing it sooner would need a cross-organisation job and can
   join the retention cron later.
